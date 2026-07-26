@@ -1,5 +1,5 @@
 """
-file_processor.py — JARVIS Universal File Processor
+file_processor.py — ANSH Universal File Processor
 
 Supported types:
   image   → describe, ocr, resize, convert, compress, crop
@@ -37,7 +37,7 @@ def _gemini_client():
 
     class _W:
         def generate_content(self, contents):
-            return _c.models.generate_content(model="gemini-2.5-flash", contents=contents)
+            return _c.models.generate_content(model="gemini-2.0-flash", contents=contents)
 
     return _W()
 

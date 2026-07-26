@@ -28,7 +28,7 @@ from pathlib import Path
 import sounddevice as sd
 from google import genai
 from google.genai import types
-from ui import JarvisUI
+from smart_ui import AnshUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
 )
@@ -81,7 +81,7 @@ def _load_system_prompt() -> str:
         return PROMPT_PATH.read_text(encoding="utf-8")
     except Exception:
         return (
-            "You are JARVIS, Tony Stark's AI assistant. "
+            "You are ANSH, Tony Stark's AI assistant. "
             "Be concise, direct, and always use the provided tools to complete tasks. "
             "Never simulate or guess results — always call the appropriate tool."
         )
@@ -408,11 +408,11 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "shutdown_jarvis",
+        "name": "shutdown_ansh",
         "description": (
             "Shuts down the assistant completely. "
             "Call this when the user expresses intent to end the conversation, "
-            "close the assistant, say goodbye, or stop Jarvis. "
+            "close the assistant, say goodbye, or stop Ansh. "
             "The user can say this in ANY language."
         ),
         "parameters": {
@@ -521,11 +521,11 @@ TOOL_DECLARATIONS = [
 # --- Plugin system ---
 
 
-class JarvisLive:
+class AnshLive:
 
-    def __init__(self, ui: JarvisUI):
+    def __init__(self, ui: AnshUI):
         self.ui             = ui
-        self._asst_name     = "JARVIS"   # updated each session from config
+        self._asst_name     = "ANSH"   # updated each session from config
         self.session              = None
         self.audio_in_queue       = None
         self.out_queue            = None
@@ -548,6 +548,37 @@ class JarvisLive:
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
+        
+        # Start wake word listener
+        self._wake_thread = threading.Thread(target=self._wake_word_loop, daemon=True)
+        self._wake_thread.start()
+
+    def _wake_word_loop(self):
+        try:
+            import speech_recognition as sr
+            recognizer = sr.Recognizer()
+            recognizer.energy_threshold = 400
+            recognizer.dynamic_energy_threshold = True
+            print("[SYS] Wake word listener started.")
+            while True:
+                try:
+                    if self.ui.muted:
+                        with sr.Microphone() as source:
+                            audio = recognizer.listen(source, timeout=1, phrase_time_limit=3)
+                        text = recognizer.recognize_google(audio).lower()
+                        if "ansh" in text:
+                            print("[SYS] Wake word detected!")
+                            # Unmute and expand UI
+                            self.ui.muted = False
+                            if hasattr(self.ui._win, "toggle_expand_safe"):
+                                self.ui._win.toggle_expand_safe()
+                except sr.WaitTimeoutError:
+                    pass
+                except Exception as e:
+                    pass
+                time.sleep(0.1)
+        except Exception as e:
+            print(f"[SYS] Wake word disabled (no mic access): {e}")
 
     def _make_remote_key(self):
         """Called from Qt main thread when user presses Remote Control."""
@@ -582,7 +613,7 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
     def interrupt(self) -> None:
-        """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
+        """Stop ANSH mid-speech: drain queued audio and open mic immediately."""
         self._interrupted = True
         q = self.audio_in_queue
         if q:
@@ -594,7 +625,7 @@ class JarvisLive:
                 except Exception:
                     break
             if drained:
-                print(f"[JARVIS] ✋ Interrupted — {drained} audio chunks discarded")
+                print(f"[ANSH] ✋ Interrupted — {drained} audio chunks discarded")
         self.set_speaking(False)
         if self._turn_done_event:
             self._turn_done_event.clear()
@@ -622,10 +653,10 @@ class JarvisLive:
         # Load customization from config
         try:
             _cfg = json.loads(open(API_CONFIG_PATH, encoding="utf-8").read())
-            self._asst_name = (_cfg.get("assistant_name") or "JARVIS").strip()
+            self._asst_name = (_cfg.get("assistant_name") or "ANSH").strip()
             _user_name = (_cfg.get("user_name") or "").strip()
         except Exception:
-            self._asst_name = "JARVIS"
+            self._asst_name = "ANSH"
             _user_name = ""
 
         memory     = load_memory()
@@ -677,7 +708,7 @@ class JarvisLive:
         name = fc.name
         args = dict(fc.args or {})
 
-        print(f"[JARVIS] 🔧 {name}  {args}")
+        print(f"[ANSH] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
         if name == "save_memory":
@@ -811,7 +842,7 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, get_system_status)
                 result = str(r)
 
-            elif name == "shutdown_jarvis":
+            elif name == "shutdown_ansh":
                 self.ui.write_log("SYS: Shutdown requested.")
                 self.speak("Goodbye, sir.")
                 def _shutdown():
@@ -831,7 +862,7 @@ class JarvisLive:
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
-        print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
+        print(f"[ANSH] 📤 {name} → {str(result)[:80]}")
         return types.FunctionResponse(
             id=fc.id, name=name,
             response={"result": result}
@@ -843,13 +874,13 @@ class JarvisLive:
             await self.session.send_realtime_input(media=msg)
 
     async def _listen_audio(self):
-        print("[JARVIS] 🎤 Mic started")
+        print("[ANSH] Mic started")
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
-                jarvis_speaking = self._is_speaking
-            if not jarvis_speaking and not self.ui.muted and not self._phone_active:
+                ansh_speaking = self._is_speaking
+            if not ansh_speaking and not self.ui.muted and not self._phone_active:
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,
@@ -864,15 +895,15 @@ class JarvisLive:
                 blocksize=CHUNK_SIZE,
                 callback=callback,
             ):
-                print("[JARVIS] 🎤 Mic stream open")
+                print("[ANSH] Mic stream open")
                 while True:
                     await asyncio.sleep(0.1)
         except Exception as e:
-            print(f"[JARVIS] ❌ Mic: {e}")
+            print(f"[ANSH] ❌ Mic: {e}")
             raise
 
     async def _receive_audio(self):
-        print("[JARVIS] 👂 Recv started")
+        print("[ANSH] Recv started")
         out_buf, in_buf = [], []
 
         try:
@@ -934,7 +965,7 @@ class JarvisLive:
                                 self.ui.write_log(f"{self._asst_name}: {full_out}")
                                 if self._dashboard:
                                     asyncio.create_task(self._dashboard.broadcast({
-                                        "type": "log", "speaker": "jarvis",
+                                        "type": "log", "speaker": "ansh",
                                         "text": full_out,
                                         "ts": datetime.now().isoformat(),
                                     }))
@@ -956,7 +987,7 @@ class JarvisLive:
                                 )
                                 # Mark next turn_complete behaviour depending on angle
                                 if self._vision_cam_active:
-                                    # Camera: keep busy until JARVIS finishes speaking the answer
+                                    # Camera: keep busy until ANSH finishes speaking the answer
                                     self._vision_cam_active    = False
                                     self._vision_close_pending = True
                                 else:
@@ -974,19 +1005,19 @@ class JarvisLive:
                     if response.tool_call:
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
-                            print(f"[JARVIS] 📞 {fc.name}")
+                            print(f"[ANSH] 📞 {fc.name}")
                             fr = await self._execute_tool(fc)
                             fn_responses.append(fr)
                         await self.session.send_tool_response(
                             function_responses=fn_responses
                         )
         except Exception as e:
-            print(f"[JARVIS] ❌ Recv: {e}")
+            print(f"[ANSH] ❌ Recv: {e}")
             traceback.print_exc()
             raise
 
     async def _play_audio(self):
-        print("[JARVIS] 🔊 Play started")
+        print("[ANSH] Play started")
 
         stream = sd.RawOutputStream(
             samplerate=RECEIVE_SAMPLE_RATE,
@@ -1018,7 +1049,7 @@ class JarvisLive:
                 except (RuntimeError, asyncio.CancelledError):
                     break   # executor shutting down — exit cleanly
         except Exception as e:
-            print(f"[JARVIS] ❌ Play: {e}")
+            print(f"[ANSH] ❌ Play: {e}")
             raise
         finally:
             self.set_speaking(False)
@@ -1242,7 +1273,14 @@ class JarvisLive:
             from dashboard.server import DashboardServer
             self._dashboard = DashboardServer()
             self._dashboard.set_connect_callback(self._on_phone_connected)
-            asyncio.create_task(self._dashboard.serve())
+            
+            async def safe_serve():
+                try:
+                    await self._dashboard.serve()
+                except Exception as e:
+                    print(f"[Dashboard] Serve failed: {e}")
+            
+            asyncio.create_task(safe_serve())
             # Runs for the whole lifetime, not just inside an active session
             asyncio.create_task(self._process_dashboard_commands())
         except Exception as e:
@@ -1251,7 +1289,7 @@ class JarvisLive:
 
         while True:
             try:
-                print("[JARVIS] Connecting...")
+                print("[ANSH] Connecting...")
                 self.ui.set_state("THINKING")
                 config = self._build_config()
 
@@ -1278,9 +1316,9 @@ class JarvisLive:
                     self._vision_last_time     = 0.0
                     self._interrupted          = False
 
-                    print("[JARVIS] Connected.")
+                    print("[ANSH] Connected.")
                     self.ui.set_state("LISTENING")
-                    self.ui.write_log("SYS: JARVIS online.")
+                    self.ui.write_log("SYS: ANSH online.")
 
                     if self._dashboard:
                         await self._dashboard.broadcast({"type": "status", "state": "active"})
@@ -1310,7 +1348,7 @@ class JarvisLive:
                 # exception escape the while-loop and causing asyncio.run() to
                 # start shutdown — resulting in "executor after shutdown" errors).
                 err_str = str(e)
-                print(f"[JARVIS] Error ({type(e).__name__}): {e}")
+                print(f"[ANSH] Error ({type(e).__name__}): {e}")
                 traceback.print_exc()
 
                 # Invalid API key — stop hammering the API, prompt re-configuration
@@ -1320,7 +1358,7 @@ class JarvisLive:
                     self.ui.prompt_reconfig()
                     while not self.ui._win._ready:
                         await asyncio.sleep(1)
-                    print("[JARVIS] New API key saved — reconnecting...")
+                    print("[ANSH] New API key saved — reconnecting...")
                     _conn_backoff = 3
                     continue
 
@@ -1348,17 +1386,27 @@ class JarvisLive:
                 await self._dashboard.broadcast({"type": "status", "state": "sleeping"})
 
             delay = getattr(self, "_conn_backoff", 3)
-            print(f"[JARVIS] Reconnecting in {delay}s...")
+            print(f"[ANSH] Reconnecting in {delay}s...")
             await asyncio.sleep(delay)
 
 def main():
-    ui = JarvisUI("face.png")
+    import socket
+    import sys
+    try:
+        # Create a socket lock to ensure only one instance of the app runs at a time
+        singleton_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        singleton_socket.bind(('127.0.0.1', 65432))
+    except socket.error:
+        print("[SYS] An instance of Ansh is already running. Exiting.")
+        sys.exit(0)
+
+    ui = AnshUI("face.png")
+    ui.wait_for_api_key()
 
     def runner():
-        ui.wait_for_api_key()
-        jarvis = JarvisLive(ui)
+        ansh = AnshLive(ui)
         try:
-            asyncio.run(jarvis.run())
+            asyncio.run(ansh.run())
         except KeyboardInterrupt:
             print("\n🔴 Shutting down...")
 

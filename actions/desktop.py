@@ -94,7 +94,7 @@ def _execute_generated_code(code: str, player=None) -> str:
     sandbox["__builtins__"]["print"] = lambda *a: output_lines.append(" ".join(str(x) for x in a))
 
     try:
-        exec(compile(code, "<jarvis_desktop>", "exec"), sandbox)
+        exec(compile(code, "<ansh_desktop>", "exec"), sandbox)
         return "\n".join(output_lines) if output_lines else "Done."
     except Exception as e:
         print(f"[Desktop] Exec error: {e}\nCode:\n{code[:300]}")
@@ -142,7 +142,7 @@ Output ONLY the Python code. No explanation, no markdown, no backticks.
 Task: {task}"""
 
     try:
-        response = _client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        response = _client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
         code = response.text.strip()
         if code.startswith("```"):
             lines = code.split("\n")

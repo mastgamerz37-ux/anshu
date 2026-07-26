@@ -65,7 +65,7 @@ def _parse_date(raw: str) -> str:
         from google import genai as _genai
         _client  = _genai.Client(api_key=_get_api_key())
         response = _client.models.generate_content(
-            model="gemini-2.5-flash-lite",
+            model="gemini-2.0-flash-lite-preview-02-05",
             contents=(
                 f"Today is {today.strftime('%Y-%m-%d')}. "
                 f"Convert this date expression to YYYY-MM-DD: '{raw}'. "
@@ -169,7 +169,7 @@ def _parse_flights_with_gemini(
 
     try:
         response = _client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.0-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=(
@@ -242,7 +242,7 @@ def _format_text_report(
     page_url:    str,
 ) -> str:
     lines = [
-        "JARVIS — Flight Search Results",
+        "ANSH — Flight Search Results",
         "─" * 50,
         f"Route     : {origin} → {destination}",
         f"Date      : {date}",

@@ -1,0 +1,34 @@
+{
+  "identity": {
+    "language": {
+      "value": "English",
+      "updated": "2026-07-26"
+    },
+    "name": {
+      "value": "Anshu",
+      "updated": "2026-07-23"
+    },
+    "notes": {
+      "value": "Prefers 'Boss' over 'efendim'",
+      "updated": "2026-07-23"
+    },
+    "relationships": {
+      "value": "Developer",
+      "updated": "2026-07-23"
+    },
+    "home_location": {
+      "value": "Barnahal",
+      "updated": "2026-07-25"
+    }
+  },
+  "preferences": {},
+  "projects": {},
+  "relationships": {},
+  "wishes": {},
+  "notes": {
+    "prefers 'Boss' over 'efendim'": {
+      "value": "User explicitly stated not to use 'efendim' and confirmed preference for 'Boss'.",
+      "updated": "2026-07-23"
+    }
+  }
+}
