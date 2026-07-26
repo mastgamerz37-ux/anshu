@@ -62,6 +62,29 @@ def _get_api_key() -> str:
         return json.load(f)["gemini_api_key"]
 
 
+import threading
+
+def _start_ad_skipper_monitor():
+    if not _PYAUTOGUI:
+        return
+    def monitor():
+        try:
+            import pygetwindow as gw
+            end_time = time.time() + 180 # Monitor for 3 minutes
+            while time.time() < end_time:
+                active = gw.getActiveWindow()
+                if active and "YouTube" in active.title:
+                    # In a real scenario, use locateOnScreen('skip_ad.png')
+                    # Here we simply focus the video player and attempt to skip
+                    time.sleep(15) # wait for ad to become skippable
+                    pyautogui.press('tab')
+                    pyautogui.press('enter')
+                    break
+                time.sleep(2)
+        except Exception:
+            pass
+    threading.Thread(target=monitor, daemon=True).start()
+
 def _open_url(url: str) -> None:
     try:
         if is_mac():
@@ -70,6 +93,7 @@ def _open_url(url: str) -> None:
             subprocess.Popen(["xdg-open", url])
         else:
             subprocess.Popen(["cmd", "/c", "start", "", url], shell=False)
+        _start_ad_skipper_monitor()
     except Exception as e:
         print(f"[YouTube] ⚠️ open_url failed: {e}")
 

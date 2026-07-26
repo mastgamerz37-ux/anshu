@@ -50,6 +50,9 @@ def _resolve_save_path(output_path: str, language: str) -> Path:
         "java": ".java", "cpp": ".cpp", "c": ".c",
         "bash": ".sh", "shell": ".sh", "powershell": ".ps1",
         "sql": ".sql", "json": ".json", "rust": ".rs", "go": ".go",
+        "react": ".jsx", "jsx": ".jsx", "tsx": ".tsx",
+        "flutter": ".dart", "dart": ".dart",
+        "php": ".php", "ruby": ".rb", "csharp": ".cs", "cs": ".cs"
     }
     if output_path:
         p = Path(output_path)
@@ -212,6 +215,9 @@ def _run_file(path: Path, args: list, timeout: int) -> str:
         ".ps1": ["powershell", "-File"],
         ".rb":  ["ruby"],
         ".php": ["php"],
+        ".dart": ["dart", "run"],
+        ".java": ["java"],
+        ".go": ["go", "run"],
     }
     interp = interpreters.get(path.suffix.lower())
     if not interp:

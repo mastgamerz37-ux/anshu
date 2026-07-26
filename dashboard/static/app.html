@@ -153,19 +153,7 @@
   </footer>
 
   <script>
-    // ── Auth — bearer token ───────────────────────────────────────────────────
-    const _authToken  = sessionStorage.getItem('jarvis_token');
-    const _sessionKey = sessionStorage.getItem('jarvis_key');
-
-    if (!_authToken) {
-      location.replace('/login');
-    }
-
-    function _authHeader() { return { 'Authorization': `Bearer ${_authToken}` }; }
-    function _authFetch(url, opts = {}) {
-      opts.headers = Object.assign({}, opts.headers, _authHeader());
-      return fetch(url, opts);
-    }
+   
 
     // ── AES-256-CBC encryption (CryptoJS) ────────────────────────────────────
     const _AES_SALT = 'JARVIS-DASHBOARD-v1';

@@ -192,6 +192,20 @@ JS/TS-specific rules:
 - Use ES modules (import/export), not CommonJS (require).
 - Add JSDoc comments for all exported functions.
 - Handle promise rejections with try/catch in async functions."""
+    elif language.lower() in ("react", "reactjs", "react.js"):
+        lang_rules = """
+React-specific rules:
+- Use functional components and React hooks (useState, useEffect).
+- Use .jsx or .tsx extensions for components.
+- Ensure to export default the main components.
+- Structure styles cleanly using CSS modules or standard imports."""
+    elif language.lower() in ("flutter", "dart"):
+        lang_rules = """
+Flutter-specific rules:
+- Main entry point must be in lib/main.dart with void main().
+- Use stateless/stateful widgets properly.
+- Include necessary material imports (package:flutter/material.dart).
+- Provide a valid pubspec.yaml if requested as part of the project files."""
 
     prompt = f"""You are a senior {language} developer writing production-quality code for a real project.
 

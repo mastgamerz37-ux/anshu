@@ -24,6 +24,12 @@ except ImportError:
     _PYAUTOGUI = False
 
 try:
+    import pygetwindow as gw
+    _GW = True
+except ImportError:
+    _GW = False
+
+try:
     import pyperclip
     _PYPERCLIP = True
 except ImportError:
@@ -356,6 +362,31 @@ def _screen_find(description: str) -> tuple[int, int] | None:
 
     return None
 
+def _get_open_tabs() -> str:
+    if not _GW:
+        return "pygetwindow not installed. Cannot fetch open tabs."
+    try:
+        windows = gw.getAllTitles()
+        browser_keywords = ["Google Chrome", "Mozilla Firefox", "Microsoft Edge", "Brave", "Opera"]
+        tabs = [w for w in windows if w and any(b in w for b in browser_keywords)]
+        if tabs:
+            return "Open Browser Tabs:\n" + "\n".join(f"- {t}" for t in tabs)
+        return "No browser tabs detected."
+    except Exception as e:
+        return f"Failed to get open tabs: {e}"
+
+def _close_active_tab() -> str:
+    if not _GW:
+        return "pygetwindow not installed. Cannot close tabs."
+    try:
+        active = gw.getActiveWindow()
+        if active and any(b in active.title for b in ["Google Chrome", "Mozilla Firefox", "Microsoft Edge", "Brave", "Opera"]):
+            _hotkey('ctrl', 'w')
+            return f"Closed active tab in {active.title}"
+        return "Active window is not a recognized browser."
+    except Exception as e:
+        return f"Failed to close tab: {e}"
+
 def computer_control(
     parameters: dict,
     response=None,
@@ -416,6 +447,12 @@ def computer_control(
     print(f"[ComputerControl] ▶ {action}  {params}")
 
     try:
+
+        if action == "close_active_tab":
+            return _close_active_tab()
+
+        if action == "get_open_tabs":
+            return _get_open_tabs()
 
         if action == "type":
             return _type(params.get("text", ""))

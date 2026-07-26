@@ -63,6 +63,8 @@ class SmartIslandWindow(QWidget):
         self.liquid_timer = QTimer(self)
         self.liquid_timer.timeout.connect(self.animate_liquid)
         self.liquid_step = 0
+        self._current_state = "IDLE"
+        self.update_state("IDLE")
 
         self.enforce_autostart()
 
@@ -116,8 +118,8 @@ class SmartIslandWindow(QWidget):
         self.subtitle_label = QLabel(self._assistant_name)
         self.subtitle_label.setStyleSheet("color: white; font-weight: bold; font-family: 'Segoe UI'; font-size: 14px; border: none;")
         self.subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.subtitle_label.setWordWrap(False)
-        self.subtitle_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self.subtitle_label.setWordWrap(True)
+        self.subtitle_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.container_layout.addWidget(self.subtitle_label)
 
         self.input_field = QLineEdit()
@@ -159,69 +161,96 @@ class SmartIslandWindow(QWidget):
         else:
             self.expand()
 
+    def animate_size(self, width, height):
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(9999, 9999)
+        screen = QApplication.primaryScreen().geometry()
+        new_x = (screen.width() - width) // 2
+        
+        self.size_anim = QPropertyAnimation(self, b"geometry")
+        self.size_anim.setDuration(300)
+        self.size_anim.setEasingCurve(QEasingCurve.Type.OutExpo)
+        self.size_anim.setEndValue(QRect(new_x, self.y_pos, width, height))
+        self.size_anim.start()
+
     def expand(self):
         self.is_expanded = True
+        self.subtitle_label.show()
         self.input_field.show()
         self.input_field.setFocus()
-        
-        screen = QApplication.primaryScreen().geometry()
-        new_x = (screen.width() - self.expanded_width) // 2
-        
-        self.setFixedSize(self.expanded_width, self.expanded_height)
-        self.move(new_x, self.y_pos)
+        self.animate_size(self.expanded_width + 100, self.expanded_height + 20)
 
     def collapse(self):
         self.is_expanded = False
         self.input_field.hide()
         self.input_field.clear()
         
-        screen = QApplication.primaryScreen().geometry()
-        new_x = (screen.width() - self.base_width) // 2
-        
-        self.setFixedSize(self.base_width, self.base_height)
-        self.move(new_x, self.y_pos)
-        self.subtitle_label.setText(self._assistant_name)
+        if getattr(self, "_current_state", "IDLE") != "SPEAKING":
+            self.subtitle_label.setText(self._assistant_name)
+            self.animate_size(self.base_width, self.base_height)
+        else:
+            self.show_subtitle(self.subtitle_label.text())
 
     def show_subtitle(self, text):
         self.reset_idle_timer()
         self.subtitle_label.setText(text)
+        if not self.subtitle_label.isVisible() and text.strip():
+            self.subtitle_label.show()
+            
+        if getattr(self, "_current_state", "IDLE") == "SPEAKING" and not self.is_expanded:
+            if text == self._assistant_name:
+                self.animate_size(self.base_width, self.base_height)
+            else:
+                chars = len(text)
+                target_w = min(500, max(200, chars * 10 + 40))
+                if chars > 45:
+                    target_w = 500
+                lines = chars // 45 + 1
+                target_h = max(70, 40 + lines * 22)
+                self.animate_size(target_w, target_h)
 
     def animate_liquid(self):
-        colors = ["#00d4ff", "#0088ff", "#00ffff"]
-        radius = [20, 23, 26, 23]
-        c = colors[self.liquid_step % len(colors)]
-        r = radius[self.liquid_step % len(radius)]
+        import math
+        self.liquid_step += 1
+        t = self.liquid_step * 0.1
+        
+        x1 = 0.5 + 0.5 * math.sin(t)
+        y1 = 0.5 + 0.5 * math.cos(t)
+        x2 = 0.5 + 0.5 * math.sin(t + math.pi)
+        y2 = 0.5 + 0.5 * math.cos(t + math.pi)
+        
+        color1 = "rgba(88, 14, 255, 0.85)"
+        color2 = "rgba(0, 212, 255, 0.85)"
+        r = 20 + 4 * math.sin(t * 2)
+        
         self.container.setStyleSheet(f"""
             QWidget {{
-                background-color: #000000;
-                border-radius: {r}px;
-                border: 2px solid {c};
+                background: qlineargradient(spread:pad, x1:{x1:.2f}, y1:{y1:.2f}, x2:{x2:.2f}, y2:{y2:.2f}, stop:0 {color1}, stop:1 {color2});
+                border-radius: {r:.1f}px;
+                border: 1px solid rgba(255, 255, 255, 40);
             }}
         """)
-        self.liquid_step += 1
 
     def update_state(self, state):
         self.reset_idle_timer()
+        self._current_state = state
         if state == "SPEAKING":
-            self.liquid_timer.start(100)
-        else:
             self.liquid_timer.stop()
-            if state == "THINKING":
-                self.container.setStyleSheet("""
-                    QWidget {
-                        background-color: #000000;
-                        border-radius: 20px;
-                        border: 2px solid #ffcc00;
-                    }
-                """)
-            else:
-                self.container.setStyleSheet("""
-                    QWidget {
-                        background-color: #000000;
-                        border-radius: 20px;
-                        border: 2px solid #333333;
-                    }
-                """)
+            self.subtitle_label.show()
+            self.container.setStyleSheet("""
+                QWidget {
+                    background-color: rgba(15, 15, 20, 240);
+                    border-radius: 20px;
+                    border: 2px solid rgba(0, 212, 255, 150);
+                }
+            """)
+            self.show_subtitle(self.subtitle_label.text())
+        else:
+            if not self.is_expanded:
+                self.subtitle_label.setText(self._assistant_name)
+                self.subtitle_label.show()
+                self.animate_size(self.base_width, self.base_height)
+            self.liquid_timer.start(50)
 
     def on_submit(self):
         self.reset_idle_timer()
@@ -305,16 +334,27 @@ class AnshUI:
 
     def wait_for_api_key(self):
         config = _read_full_config()
+        changed = False
+        from PyQt6.QtWidgets import QInputDialog, QMessageBox
+
         if not config.get("api_key"):
-            from PyQt6.QtWidgets import QInputDialog, QMessageBox
             text, ok = QInputDialog.getText(None, "Welcome to ANSH", "First time setup: Enter your Gemini API Key:", QLineEdit.EchoMode.Password)
             if ok and text:
                 config["api_key"] = text.strip()
-                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-                API_FILE.write_text(json.dumps(config, indent=4), encoding="utf-8")
+                changed = True
             else:
                 QMessageBox.critical(None, "Error", "API Key is required to run ANSH.")
                 sys.exit(0)
+                
+        if not config.get("user_name"):
+            text, ok = QInputDialog.getText(None, "Welcome to ANSH", "First time setup: What is your name?", QLineEdit.EchoMode.Normal)
+            if ok and text:
+                config["user_name"] = text.strip()
+                changed = True
+
+        if changed:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            API_FILE.write_text(json.dumps(config, indent=4), encoding="utf-8")
 
     def show_content(self, title: str, text: str): pass
     def prompt_reconfig(self): pass

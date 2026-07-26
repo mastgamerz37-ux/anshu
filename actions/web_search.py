@@ -280,6 +280,7 @@ def web_search(
     mode   = params.get("mode",  "search").lower().strip()
     items  = params.get("items", [])
     aspect = params.get("aspect", "general").strip() or "general"
+    save_to_file = params.get("save_to_file", False)
 
     if not query and not items:
         return "Please provide a search query."
@@ -290,18 +291,33 @@ def web_search(
     if player:
         player.write_log(f"[Search:{mode}] {query or ', '.join(items)}")
 
-    print(f"[WebSearch] 🔍 mode={mode!r}  query={query!r}")
+    print(f"[WebSearch] 🔍 mode={mode!r}  query={query!r} save_to_file={save_to_file}")
 
     try:
+        result = ""
         if mode == "compare" and items:
-            return _compare(items, aspect)
-        if mode == "news":
-            return _news(query)
-        if mode == "research":
-            return _research(query)
-        if mode == "price":
-            return _price(query)
-        return _search(query)
+            result = _compare(items, aspect)
+        elif mode == "news":
+            result = _news(query)
+        elif mode == "research":
+            result = _research(query)
+        elif mode == "price":
+            result = _price(query)
+        else:
+            result = _search(query)
+            
+        if save_to_file:
+            import os
+            desktop = Path.home() / "Desktop" / "AnshProjects"
+            desktop.mkdir(parents=True, exist_ok=True)
+            safe_name = "".join(c for c in (query or "comparison") if c.isalnum() or c in (' ', '_', '-')).strip().replace(' ', '_')
+            filename = desktop / f"Research_{safe_name}.md"
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(f"# Research Report: {query or ', '.join(items)}\n\n")
+                f.write(result)
+            result += f"\n\n(Information saved to {filename})"
+            
+        return result
 
     except Exception as e:
         print(f"[WebSearch] ❌ All backends failed: {e}")

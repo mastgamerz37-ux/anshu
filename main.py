@@ -1,6 +1,9 @@
 import platform as _platform
 import subprocess as _subprocess
 
+import os
+os.environ["QT_QPA_PLATFORM"] = "windows:dpiawareness=0"
+
 # ── Nuclear: force CREATE_NO_WINDOW on EVERY subprocess call on Windows ───────
 # This patches Popen itself, so no per-file flag is needed anywhere.
 if _platform.system() == "Windows":
@@ -49,6 +52,7 @@ from actions.code_helper       import code_helper
 from actions.dev_agent         import dev_agent
 from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
+from actions.email_sender      import send_email
 from actions.game_updater      import game_updater
 from actions.system_monitor    import SystemMonitor, get_system_status
 from actions.proactive         import ProactiveEngine
@@ -110,6 +114,19 @@ TOOL_DECLARATIONS = [
                 }
             },
             "required": ["app_name"]
+        }
+    },
+    {
+        "name": "send_email",
+        "description": "Opens the default browser to Gmail's compose window pre-filled with recipient, subject, and body.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "to": {"type": "STRING", "description": "Recipient email address"},
+                "subject": {"type": "STRING", "description": "Email subject"},
+                "body": {"type": "STRING", "description": "Email body content"}
+            },
+            "required": ["to"]
         }
     },
     {
@@ -729,7 +746,14 @@ class AnshLive:
         result = "Done."
 
         try:
-            if name == "open_app":
+            if name == "send_email":
+                to = args.get("to", "")
+                subject = args.get("subject", "")
+                body = args.get("body", "")
+                r = await loop.run_in_executor(None, lambda: send_email(to, subject, body))
+                result = r or f"Opened Gmail to send email to {to}."
+                
+            elif name == "open_app":
                 r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
                 result = r or f"Opened {args.get('app_name')}."
 
@@ -930,6 +954,9 @@ class AnshLive:
                             txt = _clean_transcript(sc.output_transcription.text)
                             if txt and txt != (out_buf[-1] if out_buf else ""):
                                 out_buf.append(txt)
+                                partial_out = " ".join(out_buf).strip()
+                                if partial_out:
+                                    self.ui._win.subtitle_signal.emit(partial_out)
 
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = _clean_transcript(sc.input_transcription.text)
@@ -962,6 +989,7 @@ class AnshLive:
 
                             full_out = " ".join(out_buf).strip()
                             if full_out:
+                                self.ui._win.subtitle_signal.emit(full_out)
                                 self.ui.write_log(f"{self._asst_name}: {full_out}")
                                 if self._dashboard:
                                     asyncio.create_task(self._dashboard.broadcast({
@@ -1399,6 +1427,23 @@ def main():
     except socket.error:
         print("[SYS] An instance of Ansh is already running. Exiting.")
         sys.exit(0)
+
+    if getattr(sys, 'frozen', False):
+        try:
+            import os
+            from pathlib import Path
+            desktop = Path.home() / "Desktop" / "Ansh AI.lnk"
+            if not desktop.exists():
+                import win32com.client
+                shell = win32com.client.Dispatch("WScript.Shell")
+                shortcut = shell.CreateShortCut(str(desktop))
+                shortcut.Targetpath = sys.executable
+                shortcut.WorkingDirectory = str(Path(sys.executable).parent)
+                shortcut.IconLocation = sys.executable
+                shortcut.save()
+                print("[SYS] Desktop shortcut created.")
+        except Exception as e:
+            print(f"[SYS] Failed to create shortcut: {e}")
 
     ui = AnshUI("face.png")
     ui.wait_for_api_key()
