@@ -1,4 +1,6 @@
 import os
+import json
+import time
 import shutil
 import platform
 from pathlib import Path
@@ -80,9 +82,16 @@ def _resolve_path(raw: str) -> Path:
         "videos":    _get_videos(),
         "home":      Path.home(),
     }
-    lower = raw.strip().lower()
-    if lower in shortcuts:
-        return shortcuts[lower]
+    cleaned = raw.strip().replace("\\", "/")
+    lower = cleaned.lower()
+
+    for k, v in shortcuts.items():
+        if lower == k:
+            return v
+        if lower.startswith(k + "/"):
+            remainder = cleaned[len(k)+1:]
+            return v / remainder
+
     return Path(raw).expanduser()
 
 def _format_size(b: int) -> str:
@@ -160,16 +169,38 @@ def create_folder(path: str, name: str = "") -> str:
         return f"Could not create folder: {e}"
 
 
-def delete_file(path: str, name: str = "") -> str:
+_TRASH_DIR = Path.home() / ".ansh_pending_trash"
+_REGISTRY_PATH = _TRASH_DIR / "trash_registry.json"
+
+
+def _load_trash_registry() -> dict:
+    _TRASH_DIR.mkdir(parents=True, exist_ok=True)
+    if _REGISTRY_PATH.exists():
+        try:
+            return json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_trash_registry(data: dict):
+    _TRASH_DIR.mkdir(parents=True, exist_ok=True)
+    _REGISTRY_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def soft_delete_file(path: str, name: str = "") -> str:
+    """
+    Moves file/folder to ANSH Pending Trash with double-confirmation notification.
+    Does NOT permanently delete. File can be restored anytime.
+    """
     try:
         base   = _resolve_path(path)
         target = (base / name) if name else base
         if not _is_safe_path(target):
             return f"Access denied: {target}"
         if not target.exists():
-            return f"Not found: {target.name}"
+            return f"File/folder not found: {target.name}"
 
-        # Güvenli dizin kontrolü — kritik kullanıcı klasörlerini koru
         protected = {
             _get_desktop(), _get_downloads(), _get_documents(),
             _get_pictures(), _get_music(), _get_videos(), Path.home()
@@ -177,12 +208,157 @@ def delete_file(path: str, name: str = "") -> str:
         if target.resolve() in {p.resolve() for p in protected}:
             return f"Protected directory, cannot delete: {target.name}"
 
-        return _safe_trash(target)
+        _TRASH_DIR.mkdir(parents=True, exist_ok=True)
+        trash_id = f"tr_{int(time.time())}_{target.name}"
+        dest = _TRASH_DIR / trash_id
 
-    except PermissionError:
-        return f"Permission denied: {path}"
+        reg = _load_trash_registry()
+        reg[trash_id] = {
+            "trash_id": trash_id,
+            "filename": target.name,
+            "original_path": str(target.resolve()),
+            "deleted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "is_dir": target.is_dir(),
+            "status": "PENDING_DELETION"
+        }
+        _save_trash_registry(reg)
+
+        shutil.move(str(target), str(dest))
+
+        return (
+            f"[Pending Trash] File '{target.name}' has been moved to Pending Trash (ID: {trash_id}).\n"
+            f"It is NOT deleted permanently.\n"
+            f"• To RESTORE: say 'restore {target.name}' or run action='restore'.\n"
+            f"• To DELETE PERMANENTLY: say 'delete permanently {target.name}' or run action='delete_permanently'."
+        )
     except Exception as e:
-        return f"Could not delete: {e}"
+        return f"Could not move to pending trash: {e}"
+
+
+def restore_file(name: str = "") -> str:
+    """
+    Restores a soft-deleted file from Pending Trash back to its original location.
+    """
+    try:
+        reg = _load_trash_registry()
+        if not reg:
+            return "Pending Trash is empty — no files to restore."
+
+        target_entry = None
+        target_id = None
+
+        search_key = name.strip().lower()
+        if search_key:
+            for k, entry in reg.items():
+                if search_key in entry.get("filename", "").lower() or search_key == k.lower():
+                    target_entry = entry
+                    target_id = k
+                    break
+        else:
+            sorted_items = sorted(reg.items(), key=lambda x: x[1].get("deleted_at", ""), reverse=True)
+            if sorted_items:
+                target_id, target_entry = sorted_items[0]
+
+        if not target_entry or not target_id:
+            return f"No pending file matching '{name}' found in Pending Trash."
+
+        trash_item_path = _TRASH_DIR / target_id
+        if not trash_item_path.exists():
+            del reg[target_id]
+            _save_trash_registry(reg)
+            return f"Trash item missing on disk for '{target_entry.get('filename')}'."
+
+        orig_path = Path(target_entry["original_path"])
+        orig_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if orig_path.exists():
+            orig_path = orig_path.parent / f"restored_{int(time.time())}_{orig_path.name}"
+
+        shutil.move(str(trash_item_path), str(orig_path))
+
+        del reg[target_id]
+        _save_trash_registry(reg)
+
+        return f"[Restored] '{target_entry.get('filename')}' has been successfully restored to:\n{orig_path}"
+
+    except Exception as e:
+        return f"Restore error: {e}"
+
+
+def delete_permanently(name: str = "") -> str:
+    """
+    Permanently erases a file from Pending Trash or empties trash completely.
+    """
+    try:
+        reg = _load_trash_registry()
+        if not reg:
+            return "Pending Trash is already empty."
+
+        search_key = name.strip().lower()
+        if search_key in ("all", "*", "empty", "all files", ""):
+            count = 0
+            for tid, entry in list(reg.items()):
+                item_path = _TRASH_DIR / tid
+                if item_path.exists():
+                    if item_path.is_dir():
+                        shutil.rmtree(str(item_path))
+                    else:
+                        os.remove(str(item_path))
+                del reg[tid]
+                count += 1
+            _save_trash_registry(reg)
+            return f"[Permanently Deleted] All {count} pending file(s) erased permanently from disk."
+
+        target_entry = None
+        target_id = None
+        for k, entry in reg.items():
+            if search_key in entry.get("filename", "").lower() or search_key == k.lower():
+                target_entry = entry
+                target_id = k
+                break
+
+        if not target_entry or not target_id:
+            return f"No pending file matching '{name}' found in Pending Trash."
+
+        item_path = _TRASH_DIR / target_id
+        if item_path.exists():
+            if item_path.is_dir():
+                shutil.rmtree(str(item_path))
+            else:
+                os.remove(str(item_path))
+
+        del reg[target_id]
+        _save_trash_registry(reg)
+
+        return f"[Permanently Deleted] '{target_entry.get('filename')}' has been erased permanently from disk."
+
+    except Exception as e:
+        return f"Permanent deletion error: {e}"
+
+
+def list_pending_trash() -> str:
+    """
+    Lists all files currently waiting in Pending Trash.
+    """
+    try:
+        reg = _load_trash_registry()
+        if not reg:
+            return "Pending Trash is empty (0 items)."
+
+        lines = ["[Pending Trash] (Waiting for Restore or Permanent Delete):"]
+        for tid, entry in reg.items():
+            fname = entry.get("filename", tid)
+            orig = entry.get("original_path", "Unknown")
+            dt = entry.get("deleted_at", "")
+            lines.append(f"  • {fname} (ID: {tid}) — Deleted: {dt}\n    Original: {orig}")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error listing pending trash: {e}"
+
+
+def delete_file(path: str, name: str = "") -> str:
+    return soft_delete_file(path, name=name)
 
 
 def move_file(path: str, name: str = "", destination: str = "") -> str:
@@ -491,8 +667,17 @@ def file_controller(
         elif action == "create_folder":
             return create_folder(path, name=name)
 
-        elif action == "delete":
+        elif action in ("delete", "soft_delete"):
             return delete_file(path, name=name)
+
+        elif action == "restore":
+            return restore_file(name=name or path)
+
+        elif action in ("delete_permanently", "purge", "empty_trash"):
+            return delete_permanently(name=name or path)
+
+        elif action in ("list_trash", "pending_trash"):
+            return list_pending_trash()
 
         elif action == "move":
             return move_file(path, name=name, destination=params.get("destination", ""))
