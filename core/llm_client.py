@@ -47,8 +47,10 @@ _DEFAULTS = {
 
 
 def get_llm_provider() -> str:
-    """Returns 'ollama' or 'openai' (covers LM Studio, LocalAI, Jan, etc.)."""
+    """Returns 'groq', 'openai' (covers LM Studio, LocalAI, Jan, etc.) or 'ollama'."""
     raw = _load_config().get("llm_provider", "ollama").strip().lower()
+    if raw in ("groq",):
+        return "groq"
     return "openai" if raw in ("openai", "lmstudio", "localai", "jan", "llamacpp") else "ollama"
 
 
@@ -67,6 +69,9 @@ def ensure_ollama_running(timeout: int = 15) -> bool:
     """
     url, _   = get_llm_settings()
     provider = get_llm_provider()
+
+    if provider == "groq":
+        return True
 
     if provider == "openai":
         # OpenAI-compatible servers (LM Studio, LocalAI, etc.) must be started
@@ -218,9 +223,23 @@ def check_model_available(log: Callable | None = None) -> bool:
         return True   # Ollama might still be starting up; non-blocking
 
 
+def _get_headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    cfg = _load_config()
+    key = cfg.get("groq_api_key") or cfg.get("openai_api_key") or cfg.get("api_key")
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
+
+
 def get_llm_settings() -> tuple[str, str]:
     """Returns (base_url, model_name)."""
     cfg   = _load_config()
+    provider = get_llm_provider()
+    if provider == "groq":
+        url = cfg.get("llm_url", "https://api.groq.com/openai").rstrip("/")
+        model = cfg.get("llm_model", "groq/compound-mini")
+        return url, model
     url   = cfg.get("llm_url",   _DEFAULTS["llm_url"]).rstrip("/")
     model = cfg.get("llm_model", _DEFAULTS["llm_model"])
     return url, model
@@ -240,7 +259,7 @@ def call_llm(
     url, model = get_llm_settings()
     provider   = get_llm_provider()
 
-    if provider == "openai":
+    if provider in ("openai", "groq"):
         endpoint = f"{url}/v1/chat/completions"
         payload: dict = {
             "model":      model,
@@ -252,7 +271,7 @@ def call_llm(
             payload["tools"]       = tools
             payload["tool_choice"] = "auto"
         try:
-            resp = requests.post(endpoint, json=payload, timeout=timeout)
+            resp = requests.post(endpoint, json=payload, headers=_get_headers(), timeout=timeout)
             resp.raise_for_status()
             choice = resp.json().get("choices", [{}])[0]
             msg    = choice.get("message", {})
@@ -394,7 +413,7 @@ def _stream_openai(
         payload["tool_choice"] = "auto"
 
     try:
-        with requests.post(endpoint, json=payload, timeout=timeout, stream=True) as resp:
+        with requests.post(endpoint, json=payload, headers=_get_headers(), timeout=timeout, stream=True) as resp:
             resp.raise_for_status()
             full_content = ""
             buf          = ""
