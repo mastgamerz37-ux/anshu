@@ -1,4 +1,9 @@
 #web_search.py
+import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*duckduckgo_search.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 import json
 import sys
 from pathlib import Path
@@ -19,24 +24,29 @@ def _get_api_key() -> str:
 
 
 def _gemini_search(query: str) -> str:
-    from google import genai
+    try:
+        from core.task_llm import call_task_llm
+        results = _ddg_search(query, max_results=6)
+        if results:
+            formatted = _format_ddg(query, results)
+            summary = call_task_llm(
+                prompt=f"Please summarize these search results concisely for '{query}':\n\n{formatted}",
+                system="You are ANSH. Summarize search results directly in 2-3 clear sentences."
+            )
+            return summary.strip()
+    except Exception:
+        pass
 
-    client   = genai.Client(api_key=_get_api_key())
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=query,
-        config={"tools": [{"google_search": {}}]},
-    )
-
-    text = ""
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, "text") and part.text:
-            text += part.text
-
-    text = text.strip()
-    if not text:
-        raise ValueError("Gemini returned an empty response.")
-    return text
+    try:
+        from google import genai
+        client = genai.Client(api_key=_get_api_key())
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=query,
+        )
+        return (response.text or "").strip()
+    except Exception as e:
+        raise ValueError(f"Search failed: {e}")
 
 
 def _ddg_search(query: str, max_results: int = 6) -> list[dict]:
@@ -115,39 +125,39 @@ def _format_news(query: str, results: list[dict]) -> str:
 
 def _gemini_headlines(n: int = 5) -> tuple[list[str], str]:
     """
-    Fetches current headlines via Gemini grounded search.
-    Optimised for speed: minimal prompt + strict token cap.
+    Fetches current headlines via DDG news or TaskLLM.
     Returns (headline_list, raw_text_for_display).
     """
-    import re
-    from google import genai
+    try:
+        news_items = _ddg_news("top world news today", max_results=n + 2)
+        headlines = [r["title"] for r in news_items if r.get("title")][:n]
+        if headlines:
+            raw = "\n".join(f"{i+1}. {h}" for i, h in enumerate(headlines))
+            return headlines, raw
+    except Exception:
+        pass
 
-    client = genai.Client(api_key=_get_api_key())
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=f"Current world news: {n} headlines. Numbered list, titles only.",
-        config={"tools": [{"google_search": {}}]},
-    )
-
-    raw = ""
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, "text") and part.text:
-            raw += part.text
-
-    headlines = []
-    for line in raw.strip().split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        # Only accept lines that begin with a number — skips preamble/closing sentences
-        if not re.match(r'^[\d]+[.\)\-]', line):
-            continue
-        clean = re.sub(r'^[\d]+[.\)\-]\s*', '', line)
-        clean = re.sub(r'^\*+\s*',          '', clean).strip()
-        if clean and len(clean) > 10:
-            headlines.append(clean)
-
-    return headlines[:n], raw.strip()
+    try:
+        from core.task_llm import call_task_llm
+        raw = call_task_llm(
+            prompt=f"Top current world news: {n} headlines. Numbered list, short titles only.",
+            system="Provide only a numbered list of current news headlines."
+        )
+        import re
+        headlines = []
+        for line in raw.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            if not re.match(r'^[\d]+[.\)\-]', line):
+                continue
+            clean = re.sub(r'^[\d]+[.\)\-]\s*', '', line)
+            clean = re.sub(r'^\*+\s*', '', clean).strip()
+            if clean and len(clean) > 10:
+                headlines.append(clean)
+        return headlines[:n], raw.strip()
+    except Exception:
+        return ["World news updating..."], "World news updating..."
 
 
 # ── Modes ──────────────────────────────────────────────────────────────────────
