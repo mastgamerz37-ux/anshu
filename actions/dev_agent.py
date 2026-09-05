@@ -16,8 +16,8 @@ BASE_DIR         = get_base_dir()
 API_CONFIG_PATH  = BASE_DIR / "config" / "api_keys.json"
 PROJECTS_DIR     = Path.home() / "Desktop" / "AnshProjects"
 MAX_FIX_ATTEMPTS = 5
-MODEL_PLANNER    = "gemini-2.0-flash"
-MODEL_WRITER     = "gemini-2.0-flash"
+MODEL_PLANNER    = "gemini-3.6-flash"
+MODEL_WRITER     = "gemini-3.6-flash"
 
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -25,14 +25,18 @@ def _get_api_key() -> str:
 
 
 def _get_model(model_name: str):
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
+    try:
+        from core.task_llm import get_task_llm
+        return get_task_llm(model=model_name)
+    except Exception:
+        from google import genai
+        _c = genai.Client(api_key=_get_api_key())
 
-    class _W:
-        def generate_content(self, contents):
-            return _c.models.generate_content(model=model_name, contents=contents)
+        class _W:
+            def generate_content(self, contents):
+                return _c.models.generate_content(model=model_name, contents=contents)
 
-    return _W()
+        return _W()
 
 
 def _strip_fences(text: str) -> str:
