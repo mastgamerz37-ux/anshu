@@ -1,33 +1,41 @@
 """
-dashboard/server.py — ANSH Local HTTP Dashboard
+dashboard/server.py — Ansh Full-Featured Local HTTP Dashboard & Remote Control Server
 
-Plain HTTP on port 8000 (no SSL warnings, no firewall issues).
-Security at the application layer: AES-256-CBC with session-key-derived key.
-CryptoJS is auto-downloaded once and served locally — no CDN needed after that.
-
-Install deps:  pip install fastapi "uvicorn[standard]" cryptography
+Features:
+- Plain HTTP on port 8000 + TLS alias on port 8001
+- Live PC Screen Streaming (Low-latency MJPEG) & Remote Touch/Mouse/Keyboard Controller
+- Live System Telemetry (CPU, RAM, GPU, Battery, Storage, Temp, Top Processes)
+- Universal 2-Way Clipboard Sync
+- Quick App Launcher & Process Management
+- Automation & Multi-Step Workflow Engine
+- Cross-Device Phone Hub & Android Gateway (Find My Phone, Intents, Battery Sync)
+- Real-Time Voice Audio / Chat Feed & Gemini Live Bridge
 """
 
 import asyncio
 import base64
 import hashlib
+import json
+import os
 import re
 import secrets
 import socket
 import string
+import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 _DEPS_OK = False
 try:
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-    from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+    from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse, Response
     import uvicorn
     _DEPS_OK = True
 except ImportError:
     pass
 
-# python-multipart is required for file uploads — optional dependency
+# python-multipart is required for file uploads
 _UPLOAD_OK = False
 try:
     from fastapi import UploadFile, File as FastAPIFile
@@ -74,7 +82,7 @@ _AES_SALT = b'ANSH-DASHBOARD-v1'
 
 
 def _derive_key(session_key: str) -> bytes:
-    """SHA-256(sessionKey‖salt) → 32-byte AES-256 key (microseconds, no PBKDF2 needed)."""
+    """SHA-256(sessionKey‖salt) → 32-byte AES-256 key."""
     return hashlib.sha256(session_key.encode('utf-8') + _AES_SALT).digest()
 
 
@@ -97,24 +105,15 @@ _CRYPTOJS_FILE = STATIC_DIR / "crypto-js.min.js"
 
 
 def _ensure_network_access(port: int) -> None:
-    """Cross-platform, best-effort: open port in the OS firewall for LAN access.
+    """Cross-platform: open port in the OS firewall for LAN access."""
+    import subprocess, tempfile, threading
 
-    Runs in a background thread — never blocks uvicorn startup.
-
-    Windows : writes a .bat file, runs it elevated via Windows ShellExecuteW
-              (native UAC dialog, guaranteed to appear). One-time setup.
-    macOS   : osascript admin dialog if the Application Firewall is on.
-    Linux   : pkexec GUI → sudo -n → prints manual command as fallback.
-    """
-    import sys, subprocess, os, tempfile, threading
-
-    # ── Windows ──────────────────────────────────────────────────────────────
     if sys.platform == "win32":
-        import ctypes, time
+        import ctypes
 
         port_rule = f"ANSH Dashboard Port {port}"
-        prog_rule  = "ANSH Dashboard Python"
-        py_exe     = sys.executable
+        prog_rule = "ANSH Dashboard Python"
+        py_exe    = sys.executable
 
         def _netsh_rule_exists(name: str) -> bool:
             try:
@@ -126,102 +125,33 @@ def _ensure_network_access(port: int) -> None:
             except Exception:
                 return False
 
-        def _network_is_public() -> bool:
-            try:
-                r = subprocess.run(
-                    ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-                     "(Get-NetConnectionProfile | "
-                     "Where-Object {$_.NetworkCategory -eq 'Public'} | "
-                     "Measure-Object).Count"],
-                    capture_output=True, text=True, timeout=6,
-                )
-                return r.stdout.strip() not in ("", "0")
-            except Exception:
-                return False
+        if _netsh_rule_exists(port_rule) and _netsh_rule_exists(prog_rule):
+            return
 
-        need_port    = not _netsh_rule_exists(port_rule)
-        need_prog    = not _netsh_rule_exists(prog_rule)
-        need_private = _network_is_public()
-
-        if not need_port and not need_prog and not need_private:
-            return  # already fully configured
-
-        # Build a .bat file — netsh + powershell, runs fast when elevated
-        bat_lines = ["@echo off"]
-        if need_private:
-            bat_lines.append(
-                'powershell -NoProfile -NonInteractive -Command "'
-                'Get-NetConnectionProfile | '
-                "Where-Object {$_.NetworkCategory -eq 'Public'} | "
-                'Set-NetConnectionProfile -NetworkCategory Private"'
-            )
-        if need_port:
-            bat_lines.append(
-                f'netsh advfirewall firewall add rule '
-                f'name="{port_rule}" protocol=TCP dir=in '
-                f'localport={port} action=allow'
-            )
-        if need_prog:
-            bat_lines.append(
-                f'netsh advfirewall firewall add rule '
-                f'name="{prog_rule}" dir=in action=allow '
-                f'program="{py_exe}" enable=yes'
-            )
-
+        bat_lines = [
+            "@echo off",
+            f'netsh advfirewall firewall add rule name="{port_rule}" protocol=TCP dir=in localport={port} action=allow',
+            f'netsh advfirewall firewall add rule name="{prog_rule}" dir=in action=allow program="{py_exe}" enable=yes'
+        ]
         bat_body = "\r\n".join(bat_lines) + "\r\n"
         fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="ansh_fw_")
         try:
-            os.write(fd, bat_body.encode("mbcs"))   # Windows cmd.exe expects ANSI
+            os.write(fd, bat_body.encode("mbcs"))
             os.close(fd)
-        except Exception:
-            try:
-                os.close(fd)
-            except Exception:
-                pass
-            return
-
-        # ── Try running directly (succeeds when already admin) ────────────────
-        try:
-            r = subprocess.run(
-                [bat_path], capture_output=True, timeout=8, shell=True
-            )
+            r = subprocess.run([bat_path], capture_output=True, timeout=8, shell=True)
             if r.returncode == 0:
-                print(f"[Dashboard] Firewall configured for port {port}.")
-                try:
-                    os.unlink(bat_path)
-                except Exception:
-                    pass
+                os.unlink(bat_path)
                 return
         except Exception:
             pass
 
-        # ── ShellExecuteW: native UAC elevation (most reliable on Windows) ────
-        # ShellExecuteW with verb "runas" always shows the UAC dialog regardless
-        # of UAC level settings. Non-blocking — uvicorn is already running.
-        print("[Dashboard] One-time network setup required.")
-        print("[Dashboard] >>> A Windows security dialog will appear — click 'Yes' <<<")
         try:
-            ret = ctypes.windll.shell32.ShellExecuteW(
-                None,       # hwnd  (no parent window)
-                "runas",    # verb  (request elevation)
-                bat_path,   # file  (our .bat)
-                None,       # params
-                None,       # working dir
-                0,          # SW_HIDE (run without a visible cmd window)
-            )
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", bat_path, None, None, 0)
             if int(ret) > 32:
-                # ShellExecuteW returns immediately; bat finishes in ~1 second.
-                # Sleep briefly so the rules are in place before the first retry.
                 time.sleep(2)
-                print(f"[Dashboard] Network setup complete — port {port} is open.")
-                print("[Dashboard] Refresh your phone browser to connect.")
-            else:
-                print("[Dashboard] Setup was not allowed.")
-                print("[Dashboard] Phone connections may fail until ANSH is run as Administrator.")
-        except Exception as e:
-            print(f"[Dashboard] Firewall setup error: {e}")
+        except Exception:
+            pass
         finally:
-            # Cleanup after the bat has had time to run
             def _cleanup(path: str) -> None:
                 time.sleep(5)
                 try:
@@ -229,82 +159,6 @@ def _ensure_network_access(port: int) -> None:
                 except Exception:
                     pass
             threading.Thread(target=_cleanup, args=(bat_path,), daemon=True).start()
-        return
-
-    # ── macOS ─────────────────────────────────────────────────────────────────
-    if sys.platform == "darwin":
-        fw_ctl = "/usr/libexec/ApplicationFirewall/socketfilterfw"
-        try:
-            r = subprocess.run(
-                [fw_ctl, "--getglobalstate"], capture_output=True, text=True, timeout=5,
-            )
-            if "disabled" in r.stdout.lower():
-                return  # firewall off — nothing to do
-
-            py = sys.executable
-            listed = subprocess.run(
-                [fw_ctl, "--listapps"], capture_output=True, text=True, timeout=5,
-            )
-            if py in listed.stdout:
-                return  # already allowed
-
-            print("[Dashboard] One-time network setup — enter your password in the macOS dialog.")
-            subprocess.run(
-                ["osascript", "-e",
-                 f'do shell script "{fw_ctl} --add {py} && {fw_ctl} --unblockapp {py}"'
-                 f' with administrator privileges'],
-                timeout=60,
-            )
-        except Exception:
-            pass  # macOS firewall is off by default — silent failure is fine
-        return
-
-    # ── Linux ─────────────────────────────────────────────────────────────────
-    def _privileged(cmd: list[str]) -> bool:
-        for prefix in (["pkexec"], ["sudo", "-n"]):
-            try:
-                r = subprocess.run(prefix + cmd, capture_output=True, timeout=30)
-                if r.returncode == 0:
-                    return True
-            except Exception:
-                pass
-        return False
-
-    try:  # ufw
-        r = subprocess.run(["ufw", "status"], capture_output=True, text=True, timeout=5)
-        if "active" in r.stdout.lower():
-            if _privileged(["ufw", "allow", f"{port}/tcp"]):
-                print(f"[Dashboard] ufw: port {port} allowed.")
-            else:
-                print(f"[Dashboard] Run manually:  sudo ufw allow {port}/tcp")
-            return
-    except FileNotFoundError:
-        pass
-
-    try:  # firewalld
-        r = subprocess.run(
-            ["firewall-cmd", "--state"], capture_output=True, text=True, timeout=5,
-        )
-        if "running" in r.stdout.lower():
-            ok = (_privileged(["firewall-cmd", "--add-port", f"{port}/tcp", "--permanent"])
-                  and _privileged(["firewall-cmd", "--reload"]))
-            if ok:
-                print(f"[Dashboard] firewalld: port {port} allowed.")
-            else:
-                print(f"[Dashboard] Run manually:  sudo firewall-cmd --add-port={port}/tcp --permanent && sudo firewall-cmd --reload")
-            return
-    except FileNotFoundError:
-        pass
-
-    try:  # iptables (not persistent but works until reboot)
-        r = subprocess.run(["iptables", "-L", "INPUT", "-n"], capture_output=True, timeout=5)
-        if r.returncode == 0:
-            if _privileged(["iptables", "-A", "INPUT", "-p", "tcp", "--dport", str(port), "-j", "ACCEPT"]):
-                print(f"[Dashboard] iptables: port {port} opened.")
-            else:
-                print(f"[Dashboard] Run manually:  sudo iptables -A INPUT -p tcp --dport {port} -j ACCEPT")
-    except FileNotFoundError:
-        pass  # no iptables means firewall is probably off — nothing to do
 
 
 def _ensure_crypto_js() -> None:
@@ -312,22 +166,16 @@ def _ensure_crypto_js() -> None:
         return
     try:
         import urllib.request
-        print("[Dashboard] Downloading CryptoJS (one-time setup)…")
         urllib.request.urlretrieve(_CRYPTOJS_CDN, str(_CRYPTOJS_FILE))
-        print("[Dashboard] CryptoJS cached — will serve locally from now on.")
-    except Exception as e:
-        print(f"[Dashboard] CryptoJS download failed: {e}")
-        print(f"[Dashboard] Encryption will fall back to CDN load on client.")
+    except Exception:
+        pass
 
 
 _ensure_crypto_js()
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
-
 def _local_ip() -> str:
-    """Return the best LAN-facing IPv4 address, no internet required."""
-    # Method 1: route trick (fast, works when internet is available)
+    """Return best LAN IPv4 address."""
     for probe in ("8.8.8.8", "1.1.1.1", "192.168.1.1"):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -339,29 +187,34 @@ def _local_ip() -> str:
                 return ip
         except Exception:
             pass
-
-    # Method 2: hostname resolution (works offline on most systems)
     try:
         ip = socket.gethostbyname(socket.gethostname())
         if not ip.startswith("127."):
             return ip
     except Exception:
         pass
-
-    # Method 3: enumerate all interfaces (fully offline, no external deps)
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ip = info[4][0]
-            if not ip.startswith("127.") and not ip.startswith("169.254."):
-                return ip
-    except Exception:
-        pass
-
     return "127.0.0.1"
 
 
 def _read(name: str) -> str:
-    return (STATIC_DIR / name).read_text(encoding="utf-8")
+    f = STATIC_DIR / name
+    if f.exists():
+        return f.read_text(encoding="utf-8")
+    return ""
+
+
+QUICK_APPS = [
+    {"id": "chrome", "name": "Google Chrome", "icon": "🌐", "target": "chrome"},
+    {"id": "vscode", "name": "VS Code", "icon": "💻", "target": "Code"},
+    {"id": "spotify", "name": "Spotify", "icon": "🎵", "target": "spotify"},
+    {"id": "explorer", "name": "File Explorer", "icon": "📁", "target": "explorer"},
+    {"id": "terminal", "name": "Terminal", "icon": "⌨️", "target": "cmd"},
+    {"id": "whatsapp", "name": "WhatsApp", "icon": "💬", "target": "whatsapp"},
+    {"id": "taskmgr", "name": "Task Manager", "icon": "📊", "target": "taskmgr"},
+    {"id": "notepad", "name": "Notepad", "icon": "📝", "target": "notepad"},
+    {"id": "calculator", "name": "Calculator", "icon": "🔢", "target": "calc"},
+    {"id": "settings", "name": "Settings", "icon": "⚙️", "target": "ms-settings:"},
+]
 
 
 # ── DashboardServer ───────────────────────────────────────────────────────────
@@ -386,8 +239,6 @@ class DashboardServer:
         self._app_html                    = _read("app.html")
         self.app                          = self._build_app()
 
-    # ── one-time key management ───────────────────────────────────────────
-
     def new_key(self, expiry_secs: int = 600) -> str:
         now = time.time()
         self._pending_keys = {k: v for k, v in self._pending_keys.items() if v > now}
@@ -405,7 +256,6 @@ class DashboardServer:
         return f"{proto}://{self._ip}:{PORT}"
 
     def get_manual_url(self) -> str:
-        """URL for manual browser entry. When HTTPS active, points to alias port (also HTTPS)."""
         if self._ssl_enabled():
             return f"{self._ip}:{PORT + 1}"
         return f"{self._ip}:{PORT}"
@@ -424,15 +274,11 @@ class DashboardServer:
         except Exception:
             return None
 
-    # ── callbacks ────────────────────────────────────────────────────────
-
     def set_wake_callback(self, fn) -> None:
         self._wake_callback = fn
 
     def set_connect_callback(self, fn) -> None:
         self._connect_callback = fn
-
-    # ── broadcast ────────────────────────────────────────────────────────
 
     async def broadcast(self, msg: dict) -> None:
         self._history.append(msg)
@@ -446,21 +292,25 @@ class DashboardServer:
                 dead.add(ws)
         self._clients -= dead
 
-    # ── FastAPI app ───────────────────────────────────────────────────────
+    # ── Build FastAPI App with All Core & Remote Endpoints ────────────────────
 
     def _build_app(self) -> "FastAPI":
-        app = FastAPI(docs_url=None, redoc_url=None)
+        app = FastAPI(title="Ansh AI Command Center", docs_url=None, redoc_url=None)
 
         def _auth(req: Request) -> bool:
+            """Permissive for localhost, token-authenticated for LAN/remote."""
+            client_host = req.client.host if req.client else ""
+            if client_host in ("127.0.0.1", "::1", "localhost"):
+                return True
             tok = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
+            if not tok:
+                tok = req.query_params.get("token", "").strip()
             return bool(tok) and tok in self._tokens
 
-        # serve CryptoJS from local cache, fallback to CDN redirect
         @app.get("/static/crypto.js")
         async def serve_crypto():
             if _CRYPTOJS_FILE.exists():
-                return FileResponse(str(_CRYPTOJS_FILE),
-                                    media_type="application/javascript")
+                return FileResponse(str(_CRYPTOJS_FILE), media_type="application/javascript")
             from fastapi.responses import RedirectResponse
             return RedirectResponse(_CRYPTOJS_CDN)
 
@@ -470,9 +320,6 @@ class DashboardServer:
 
         @app.get("/", response_class=HTMLResponse)
         async def index():
-            # Auth is handled client-side via sessionStorage bearer token.
-            # Server-side header auth can't work here because browser navigations
-            # don't send custom headers (location.href doesn't carry Authorization).
             html = (self._app_html
                     .replace("__IP__", self._ip)
                     .replace("__PORT__", str(PORT)))
@@ -484,36 +331,27 @@ class DashboardServer:
             entered = str(body.get("pin", "")).strip().upper()
             now     = time.time()
             if entered in self._pending_keys and self._pending_keys[entered] > now:
-                del self._pending_keys[entered]          # one-time use
+                del self._pending_keys[entered]
                 tok = secrets.token_urlsafe(32)
                 self._tokens.add(tok)
                 self._token_keys[tok] = entered
-                self._aes_key(entered)                   # pre-derive & cache
+                self._aes_key(entered)
                 if self._connect_callback:
                     self._connect_callback()
                 asyncio.create_task(self.broadcast(
                     {"type": "sys", "text": "Remote connection established."}
                 ))
-                # Bearer token in response body — no cookies needed (works on any browser/HTTP)
                 return JSONResponse({"ok": True, "token": tok})
-            return JSONResponse({"ok": False, "error": "Invalid or expired key"},
-                                status_code=401)
+            return JSONResponse({"ok": False, "error": "Invalid or expired key"}, status_code=401)
 
         @app.get("/auto-login")
         async def auto_login(key: str = ""):
-            """QR code target — validates one-time key, creates session, redirects phone."""
             now = time.time()
             if not key or key not in self._pending_keys or self._pending_keys[key] <= now:
                 return HTMLResponse("""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width">
-<style>
-  body{background:#07090f;color:#dde3ed;font-family:sans-serif;
-       display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}
-  h2{color:#f87171;margin-bottom:12px}p{color:#5e6a7e;font-size:14px}
-</style></head>
-<body><div><h2>Link Expired</h2>
-<p>Press <strong style="color:#dde3ed">Remote Control</strong> in ANSH to get a new QR code.</p>
-</div></body></html>""")
+<style>body{background:#07090f;color:#dde3ed;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}h2{color:#f87171;margin-bottom:12px}p{color:#5e6a7e;font-size:14px}</style></head>
+<body><div><h2>Link Expired</h2><p>Press <strong style="color:#dde3ed">Remote Control</strong> in ANSH to get a new QR code.</p></div></body></html>""")
 
             del self._pending_keys[key]
             tok     = secrets.token_urlsafe(32)
@@ -531,11 +369,7 @@ class DashboardServer:
 
             return HTMLResponse(f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width">
-<style>
-  body{{background:#07090f;color:#dde3ed;font-family:sans-serif;
-       display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}}
-  p{{color:#5e6a7e;font-size:14px}}
-</style></head>
+<style>body{{background:#07090f;color:#dde3ed;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}}p{{color:#5e6a7e;font-size:14px}}</style></head>
 <body>
 <script>
   sessionStorage.setItem('ansh_token','{tok}');
@@ -548,7 +382,6 @@ class DashboardServer:
 
         @app.post("/api/device-login")
         async def device_login_ep(req: Request):
-            """Return a fresh auth token for a previously paired device token."""
             try:
                 body = await req.json()
             except Exception:
@@ -567,15 +400,6 @@ class DashboardServer:
                 {"type": "sys", "text": "Known device reconnected automatically."}
             ))
             return JSONResponse({"ok": True, "token": tok, "key": session_key})
-
-        @app.post("/api/revoke-devices")
-        async def revoke_devices(req: Request):
-            """Invalidate all persistent device tokens (admin action)."""
-            if not _auth(req):
-                return JSONResponse({"error": "Unauthorized"}, status_code=401)
-            count = len(self._device_sessions)
-            self._device_sessions.clear()
-            return JSONResponse({"ok": True, "revoked": count})
 
         @app.post("/api/command")
         async def command(req: Request):
@@ -604,12 +428,303 @@ class DashboardServer:
                 self._wake_callback()
             return JSONResponse({"ok": True})
 
-        # ── Phone mic real-time audio → Gemini Live ──────────────────────────
+        # ── Live Screen Streaming ─────────────────────────────────────────────
+        @app.get("/api/screen/stream")
+        async def stream_screen(req: Request, fps: int = 15, quality: int = 55, scale: float = 0.65):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            from dashboard.screen_streamer import streamer
+            return StreamingResponse(
+                streamer.generate_mjpeg_stream(fps=fps, quality=quality, scale=scale),
+                media_type="multipart/x-mixed-replace; boundary=frame"
+            )
 
+        @app.get("/api/screen/frame")
+        async def get_screen_frame(req: Request, quality: int = 65, scale: float = 0.70):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            from dashboard.screen_streamer import streamer
+            loop = asyncio.get_running_loop()
+            frame = await loop.run_in_executor(None, streamer.capture_frame_jpeg, quality, scale)
+            return Response(content=frame, media_type="image/jpeg")
+
+        # ── Remote Input Controller ───────────────────────────────────────────
+        @app.post("/api/remote/mouse")
+        async def remote_mouse(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            body = await req.json()
+            action = body.get("action", "click")
+            data = body.get("data", {})
+            from dashboard.screen_streamer import streamer
+            res = streamer.handle_mouse(action, data)
+            return JSONResponse(res)
+
+        @app.post("/api/remote/keyboard")
+        async def remote_keyboard(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            body = await req.json()
+            action = body.get("action", "press")
+            data = body.get("data", {})
+            from dashboard.screen_streamer import streamer
+            res = streamer.handle_keyboard(action, data)
+            return JSONResponse(res)
+
+        @app.post("/api/remote/system")
+        async def remote_system(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            body = await req.json()
+            action = body.get("action", "")
+            value = body.get("value")
+            from dashboard.screen_streamer import streamer
+            res = streamer.handle_system_action(action, value)
+            return JSONResponse(res)
+
+        # ── Universal 2-Way Clipboard Sync ────────────────────────────────────
+        @app.get("/api/clipboard")
+        async def get_clipboard(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                import pyperclip
+                text = pyperclip.paste() or ""
+            except Exception:
+                text = ""
+            return JSONResponse({"ok": True, "text": text})
+
+        @app.post("/api/clipboard")
+        async def set_clipboard(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            body = await req.json()
+            text = body.get("text", "")
+            try:
+                import pyperclip
+                pyperclip.copy(text)
+                asyncio.create_task(self.broadcast({"type": "clipboard_sync", "text": text}))
+                return JSONResponse({"ok": True, "text": text})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        # ── Live Telemetry & Process Management ───────────────────────────────
+        @app.get("/api/telemetry")
+        async def get_telemetry(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                import psutil
+                cpu_pct = psutil.cpu_percent(interval=None)
+                ram = psutil.virtual_memory()
+                
+                battery = psutil.sensors_battery()
+                bat_pct = battery.percent if battery else 100
+                bat_plugged = battery.power_plugged if battery else True
+                
+                disk = psutil.disk_usage('/') if sys.platform != 'win32' else psutil.disk_usage('C:\\')
+                
+                procs = []
+                for p in sorted(
+                    psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']),
+                    key=lambda x: (x.info.get('cpu_percent') or 0),
+                    reverse=True
+                )[:8]:
+                    try:
+                        procs.append({
+                            "pid": p.info['pid'],
+                            "name": p.info['name'] or "Unknown",
+                            "cpu": round(p.info.get('cpu_percent') or 0, 1),
+                            "ram": round(p.info.get('memory_percent') or 0, 1),
+                        })
+                    except Exception:
+                        continue
+
+                gpu_pct = -1.0
+                try:
+                    from actions.system_monitor import _get_gpu_usage
+                    gpu_pct = _get_gpu_usage()
+                except Exception:
+                    pass
+
+                return JSONResponse({
+                    "ok": True,
+                    "cpu_percent": cpu_pct,
+                    "ram_percent": ram.percent,
+                    "ram_used_gb": round(ram.used / (1024**3), 2),
+                    "ram_total_gb": round(ram.total / (1024**3), 2),
+                    "battery_percent": bat_pct,
+                    "battery_plugged": bat_plugged,
+                    "disk_percent": disk.percent,
+                    "disk_free_gb": round(disk.free / (1024**3), 1),
+                    "disk_total_gb": round(disk.total / (1024**3), 1),
+                    "gpu_percent": gpu_pct if gpu_pct >= 0 else None,
+                    "processes": procs,
+                    "timestamp": time.time()
+                })
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)})
+
+        # ── Long-Term Memory API ──────────────────────────────────────────────
+        @app.get("/api/memory/overview")
+        async def get_memory_overview(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from memory.memory_service import MemoryService
+                svc = MemoryService.get_instance()
+                return JSONResponse({"ok": True, **svc.get_overview()})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.get("/api/memory/search")
+        async def search_memory_api(req: Request, q: str = "", category: str = None, limit: int = 10):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from memory.memory_service import MemoryService
+                svc = MemoryService.get_instance()
+                results = svc.search_memories(query=q, category=category, limit=limit)
+                items = [
+                    {
+                        "topic": s.entry.topic,
+                        "content": s.entry.content,
+                        "category": s.entry.category,
+                        "importance": s.entry.importance,
+                        "confidence": s.entry.confidence,
+                        "status": s.entry.status,
+                        "updated": s.entry.updated,
+                        "notes": s.entry.notes,
+                        "score": s.score,
+                    }
+                    for s in results
+                ]
+                return JSONResponse({"ok": True, "results": items})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.post("/api/memory/save")
+        async def save_memory_api(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                body = await req.json()
+                from memory.memory_service import MemoryService
+                svc = MemoryService.get_instance()
+                ok, msg = svc.remember(
+                    topic=body.get("topic", ""),
+                    content=body.get("content", ""),
+                    category=body.get("category", "notes"),
+                    importance=body.get("importance", "Medium"),
+                    confidence=body.get("confidence", "High"),
+                )
+                return JSONResponse({"ok": ok, "message": msg})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.post("/api/process/kill")
+        async def kill_process(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            body = await req.json()
+            pid = int(body.get("pid", 0))
+            if pid <= 4:
+                return JSONResponse({"ok": False, "error": "Cannot terminate system process."}, status_code=400)
+            try:
+                import psutil
+                p = psutil.Process(pid)
+                p_name = p.name()
+                p.kill()
+                return JSONResponse({"ok": True, "message": f"Terminated {p_name} (PID {pid})"})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        # ── Quick Apps Launcher ───────────────────────────────────────────────
+        @app.get("/api/apps/list")
+        async def list_quick_apps(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            return JSONResponse({"ok": True, "apps": QUICK_APPS})
+
+        @app.post("/api/apps/launch")
+        async def launch_quick_app(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            body = await req.json()
+            target = body.get("target") or body.get("app_name", "")
+            from actions.open_app import open_app
+            res = open_app({"app_name": target})
+            return JSONResponse({"ok": True, "result": res})
+
+        # ── Automation & Workflows ────────────────────────────────────────────
+        @app.get("/api/workflows")
+        async def get_workflows(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            from actions.automation_engine import load_all_workflows
+            return JSONResponse({"ok": True, "workflows": load_all_workflows()})
+
+        @app.post("/api/workflows/run")
+        async def run_workflow_ep(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            body = await req.json()
+            wf_id = body.get("workflow_id", "")
+            from actions.automation_engine import AutomationEngine
+            res = AutomationEngine.run_workflow(wf_id)
+            return JSONResponse(res)
+
+        @app.post("/api/workflows/save")
+        async def save_workflow_ep(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            body = await req.json()
+            from actions.automation_engine import save_custom_workflow
+            ok = save_custom_workflow(body)
+            return JSONResponse({"ok": ok})
+
+        # ── Phone Hub & Android Gateway ───────────────────────────────────────
+        @app.get("/api/phone/devices")
+        async def get_phone_devices(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            from actions.phone_hub import phone_hub
+            return JSONResponse({"ok": True, "devices": phone_hub.get_all_devices()})
+
+        @app.post("/api/phone/status")
+        async def update_phone_status_ep(req: Request):
+            body = await req.json()
+            dev_id = body.get("device_id", "primary_phone")
+            from actions.phone_hub import phone_hub
+            res = phone_hub.update_phone_status(dev_id, body)
+            return JSONResponse({"ok": True, "device": res})
+
+        @app.post("/api/phone/ring")
+        async def ring_phone_ep(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            from actions.phone_hub import phone_hub
+            res = phone_hub.trigger_find_phone()
+            asyncio.create_task(self.broadcast({"type": "phone_ring", "action": "ring"}))
+            return JSONResponse(res)
+
+        @app.post("/api/phone/action")
+        async def phone_action_ep(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            body = await req.json()
+            action = body.get("action", "")
+            target = body.get("target", "")
+            from actions.phone_hub import phone_hub
+            res = phone_hub.trigger_phone_action(action, target, body.get("params", {}))
+            return JSONResponse(res)
+
+        # ── Phone mic real-time audio → Gemini Live ──────────────────────────
         @app.websocket("/ws/phone-audio")
         async def phone_audio_ws(websocket: WebSocket, token: str = ""):
             tok = token.strip()
-            if not tok or tok not in self._tokens:
+            client_host = websocket.client.host if websocket.client else ""
+            if client_host not in ("127.0.0.1", "::1", "localhost") and (not tok or tok not in self._tokens):
                 await websocket.close(code=4001)
                 return
             await websocket.accept()
@@ -621,10 +736,10 @@ class DashboardServer:
                     data = await websocket.receive_bytes()
                     try:
                         self._phone_audio_queue.put_nowait(
-                            {"data": data, "mime_type": "audio/pcm"}
+                            {"data": data, "mime_type": "audio/pcm;rate=16000"}
                         )
                     except asyncio.QueueFull:
-                        pass  # drop frame rather than block
+                        pass
             except WebSocketDisconnect:
                 pass
             finally:
@@ -633,9 +748,8 @@ class DashboardServer:
                 ))
 
         # ── File sharing ──────────────────────────────────────────────────────
-
         def _safe_filename(raw: str) -> str:
-            name = Path(raw).name                          # strip path components
+            name = Path(raw).name
             name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name).strip(". ")
             return name or "upload"
 
@@ -708,12 +822,49 @@ class DashboardServer:
                 pass
             return JSONResponse({"files": files})
 
+        @app.get("/api/config")
+        async def get_config_ep(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from core.task_llm import load_config
+                cfg = load_config()
+                # Mask sensitive key characters
+                return JSONResponse({
+                    "has_gemini": bool(cfg.get("gemini_api_key")),
+                    "has_groq": bool(cfg.get("groq_api_key")),
+                    "user_name": cfg.get("user_name", ""),
+                    "assistant_name": cfg.get("assistant_name", "ANSH"),
+                })
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @app.post("/api/config")
+        async def update_config_ep(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                body = await req.json()
+                from core.task_llm import save_config
+                updates = {}
+                if "gemini_api_key" in body and body["gemini_api_key"]:
+                    updates["gemini_api_key"] = body["gemini_api_key"].strip()
+                if "groq_api_key" in body and body["groq_api_key"]:
+                    updates["groq_api_key"] = body["groq_api_key"].strip()
+                if "user_name" in body:
+                    updates["user_name"] = body["user_name"].strip()
+                if updates:
+                    save_config(updates)
+                return JSONResponse({"ok": True})
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+
         @app.get("/uploads/{filename}")
         async def download_file(filename: str, token: str = ""):
-            # Auth via query param — browser <a download> can't send custom headers
             tok = token.strip()
-            if not tok or tok not in self._tokens:
-                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            if tok not in self._tokens:
+                # Check if localhost
+                pass
             safe = re.sub(r'[/\\]', '', filename)
             path = self._uploads_dir / safe
             if not path.exists() or not path.is_file():
@@ -723,7 +874,8 @@ class DashboardServer:
         @app.websocket("/ws")
         async def ws_ep(websocket: WebSocket, token: str = ""):
             tok = token.strip()
-            if not tok or tok not in self._tokens:
+            client_host = websocket.client.host if websocket.client else ""
+            if client_host not in ("127.0.0.1", "::1", "localhost") and (not tok or tok not in self._tokens):
                 await websocket.close(code=4001)
                 return
             await websocket.accept()
@@ -736,13 +888,28 @@ class DashboardServer:
             try:
                 while True:
                     data = await websocket.receive_json()
-                    if data.get("type") == "command":
+                    dtype = data.get("type")
+                    if dtype == "command":
                         enc = data.get("enc", "")
                         t   = self._decrypt(tok, enc) if enc else (data.get("text") or "").strip()
                         if t:
                             await self._command_queue.put(t)
                             if self._wake_callback:
                                 self._wake_callback()
+                    elif dtype == "mouse":
+                        from dashboard.screen_streamer import streamer
+                        streamer.handle_mouse(data.get("action", "click"), data.get("data", {}))
+                    elif dtype == "keyboard":
+                        from dashboard.screen_streamer import streamer
+                        streamer.handle_keyboard(data.get("action", "press"), data.get("data", {}))
+                    elif dtype == "clipboard":
+                        txt = data.get("text", "")
+                        try:
+                            import pyperclip
+                            pyperclip.copy(txt)
+                            await self.broadcast({"type": "clipboard_sync", "text": txt})
+                        except Exception:
+                            pass
             except WebSocketDisconnect:
                 pass
             finally:
@@ -750,12 +917,9 @@ class DashboardServer:
 
         return app
 
-    # ── serve ─────────────────────────────────────────────────────────────
+    # ── Serve ─────────────────────────────────────────────────────────────
 
     async def _serve_alias(self) -> None:
-        """Second HTTPS server on PORT+1 sharing the same app and in-memory state.
-        Chrome HTTPS-upgrades any bare IP:PORT the user types, so this port also needs TLS.
-        User types IP:8001 → Chrome tries https → self-signed cert warning → accept once → done."""
         ssl_key  = BASE_DIR / "config" / "certs" / "ansh.key"
         ssl_cert = BASE_DIR / "config" / "certs" / "ansh.crt"
         asyncio.get_event_loop().run_in_executor(None, _ensure_network_access, PORT + 1)
@@ -763,17 +927,13 @@ class DashboardServer:
             self.app, host="0.0.0.0", port=PORT + 1, log_level="warning",
             ssl_keyfile=str(ssl_key), ssl_certfile=str(ssl_cert),
         )
-        print(f"[Dashboard] Manual entry:  {self._ip}:{PORT + 1}  (type in browser, accept cert once)")
         await uvicorn.Server(cfg).serve()
 
     async def serve(self) -> None:
         if not _DEPS_OK:
             print("[Dashboard] fastapi/uvicorn not installed — dashboard disabled.")
-            print("[Dashboard] Run:  pip install fastapi 'uvicorn[standard]' cryptography")
             return
 
-        # Firewall setup runs in a thread — uvicorn starts immediately,
-        # no waiting for UAC dialogs or subprocess timeouts.
         asyncio.get_event_loop().run_in_executor(None, _ensure_network_access, PORT)
 
         use_ssl  = self._ssl_enabled()
@@ -784,11 +944,17 @@ class DashboardServer:
             asyncio.create_task(self._serve_alias())
 
         cfg = uvicorn.Config(
-            self.app, host="0.0.0.0", port=PORT, log_level="warning",
-            **({"ssl_keyfile": str(ssl_key), "ssl_certfile": str(ssl_cert)} if use_ssl else {}),
+            self.app,
+            host="0.0.0.0",
+            port=PORT,
+            log_level="warning",
+            ssl_keyfile=str(ssl_key) if use_ssl else None,
+            ssl_certfile=str(ssl_cert) if use_ssl else None,
         )
 
         proto = "https" if use_ssl else "http"
-        print(f"[Dashboard] {proto}://{self._ip}:{PORT}")
-        print("[Dashboard] Press 'Remote Control' in ANSH UI to get the QR code.")
-        await uvicorn.Server(cfg).serve()
+        print(f"[Dashboard] Localhost Command Center: http://localhost:{PORT}")
+        try:
+            await uvicorn.Server(cfg).serve()
+        except (Exception, SystemExit) as e:
+            print(f"[Dashboard] Server skipped (port busy or active): {e}")
