@@ -62,17 +62,14 @@ def _parse_date(raw: str) -> str:
             return val.strftime("%Y-%m-%d")
 
     try:
-        from google import genai as _genai
-        _client  = _genai.Client(api_key=_get_api_key())
-        response = _client.models.generate_content(
-            model="gemini-2.0-flash-lite-preview-02-05",
-            contents=(
+        from core.task_llm import call_task_llm
+        result = call_task_llm(
+            prompt=(
                 f"Today is {today.strftime('%Y-%m-%d')}. "
                 f"Convert this date expression to YYYY-MM-DD: '{raw}'. "
                 f"Return ONLY the date string, nothing else."
             )
-        )
-        result = response.text.strip()
+        ).strip()
         if re.match(r"\d{4}-\d{2}-\d{2}", result):
             return result
     except Exception as e:
@@ -168,22 +165,21 @@ def _parse_flights_with_gemini(
     )
 
     try:
-        response = _client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=(
-                    "You are a flight data extraction expert. "
-                    "Extract flight information from raw webpage text. "
-                    "Return ONLY valid JSON — no markdown, no explanation."
-                )
+        from core.task_llm import call_task_llm
+        raw_res = call_task_llm(
+            prompt=prompt,
+            system=(
+                "You are a flight data extraction expert. "
+                "Extract flight information from raw webpage text. "
+                "Return ONLY valid JSON — no markdown, no explanation."
             ),
+            json_mode=True,
         )
-        text     = re.sub(r"```(?:json)?", "", response.text).strip().rstrip("`").strip()
+        text     = re.sub(r"```(?:json)?", "", raw_res).strip().rstrip("`").strip()
         flights  = json.loads(text)
         return flights if isinstance(flights, list) else []
     except Exception as e:
-        print(f"[FlightFinder] ⚠️ Gemini parse failed: {e}")
+        print(f"[FlightFinder] ⚠️ Flight parse failed: {e}")
         return []
 
 def _format_spoken(
