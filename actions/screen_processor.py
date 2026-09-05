@@ -11,6 +11,9 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 import numpy as np
 import sounddevice as sd
 
@@ -112,7 +115,8 @@ def _capture_screen() -> tuple[bytes, str]:
     if not _MSS:
         raise RuntimeError("mss is not installed. Run: pip install mss")
 
-    with mss.mss() as sct:
+    _mss_cls = getattr(mss, "MSS", None) or mss.mss
+    with _mss_cls() as sct:
         monitors = sct.monitors          # [0] = all combined, [1..n] = real screens
         target   = monitors[1] if len(monitors) > 1 else monitors[0]
         shot     = sct.grab(target)
