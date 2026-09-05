@@ -1,8 +1,13 @@
+import warnings
+import logging
+logging.getLogger("google.genai").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*duckduckgo_search.*")
+
 import platform as _platform
 import subprocess as _subprocess
-
 import os
-os.environ["QT_QPA_PLATFORM"] = "windows:dpiawareness=0"
 
 # ── Nuclear: force CREATE_NO_WINDOW on EVERY subprocess call on Windows ───────
 # This patches Popen itself, so no per-file flag is needed anywhere.
@@ -31,7 +36,7 @@ from pathlib import Path
 import sounddevice as sd
 from google import genai
 from google.genai import types
-from smart_ui import AnshUI
+from ui import AnshUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
 )
@@ -40,7 +45,7 @@ from actions.file_processor import file_processor
 from actions.flight_finder     import flight_finder
 from actions.open_app          import open_app
 from actions.weather_report    import weather_action
-from actions.send_message      import send_message
+from actions.send_message      import send_message, read_messages, whatsapp_call, whatsapp_auto_reply
 from actions.reminder          import reminder
 from actions.computer_settings import computer_settings
 from actions.screen_processor  import _capture_camera, _capture_screen
@@ -57,7 +62,26 @@ from actions.game_updater      import game_updater
 from actions.system_monitor    import SystemMonitor, get_system_status
 from actions.proactive         import ProactiveEngine
 from actions.web_search        import _news as _fetch_news_sync
+from actions.automation_engine import automation_workflow
+from actions.phone_hub         import phone_action
+from actions.screen_peeler     import screen_peeler_action
+from actions.document_generator import document_generator_action
+from actions.wormhole          import wormhole_action
+from actions.interactive_games import interactive_games_action
+from actions.memory_actions    import (
+    save_memory_action,
+    search_memory_action,
+    forget_memory_action,
+    list_memories_action,
+)
+from core.skills_manager       import skills_tool
 from memory.config_manager     import get_brief_enabled
+from core.authentication       import AuthenticationManager, AuthState
+from core.permissions          import check_tool_permission
+from core.agi_planner          import AGIPlanner
+from core.agi_memory           import AGIMemoryEngine
+from core.agi_proactive        import AGIProactiveBrain
+from core.license_manager      import LicenseManager
 
 
 def get_base_dir():
@@ -69,11 +93,13 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
-LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+LIVE_MODEL          = "gemini-3.1-flash-live-preview"
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 1024
+
+os.environ["QT_LOGGING_RULES"] = "qt.qpa.window=false"
 
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -98,6 +124,24 @@ def _clean_transcript(text: str) -> str:
     return text.strip()
 
 TOOL_DECLARATIONS = [
+    {
+        "name": "autonomous_agent_goal",
+        "description": (
+            "Activates System 2 Autonomous Goal Execution for complex multi-step user tasks. "
+            "Decomposes goals into sequential steps, executes tools, verifies results, reflects on errors, "
+            "and updates persistent working memory."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "goal": {
+                    "type": "STRING",
+                    "description": "High-level goal description to accomplish autonomously."
+                }
+            },
+            "required": ["goal"]
+        }
+    },
     {
         "name": "open_app",
         "description": (
@@ -132,11 +176,10 @@ TOOL_DECLARATIONS = [
     {
         "name": "web_search",
         "description": (
-            "Searches the web. Use for ANY question about current facts, events, prices, "
-            "or topics — always prefer this over guessing. "
-            "Modes: 'search' (default), 'news' (latest headlines on a topic), "
-            "'research' (deep comprehensive answer), 'price' (product cost lookup), "
-            "'compare' (side-by-side comparison of items)."
+            "Searches the web online. ALWAYS call this tool whenever you don't know how to do something, "
+            "if a task or question is unfamiliar, or for any question about facts, tutorials, guides, prices, "
+            "news, or current events. Never refuse or say 'I don't know' without calling web_search first. "
+            "Modes: 'search' (default), 'news' (latest headlines), 'research' (deep answer), 'price' (costs), 'compare' (comparisons)."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -183,6 +226,44 @@ TOOL_DECLARATIONS = [
                 "platform":     {"type": "STRING", "description": "Platform: WhatsApp, Telegram, etc."}
             },
             "required": ["receiver", "message_text", "platform"]
+        }
+    },
+    {
+        "name": "read_messages",
+        "description": "Reads incoming messages from an open WhatsApp or messaging chat window to understand received messages and reply accordingly.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "platform": {"type": "STRING", "description": "Platform: WhatsApp, Telegram, etc. Default is WhatsApp"},
+                "receiver": {"type": "STRING", "description": "Optional contact name to open and read"}
+            }
+        }
+    },
+    {
+        "name": "whatsapp_call",
+        "description": "Makes a WhatsApp voice call or video call to a contact on WhatsApp Desktop.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "receiver":  {"type": "STRING", "description": "Contact name or phone number to call"},
+                "call_type": {"type": "STRING", "description": "Call type: 'voice' (default) or 'video'"}
+            },
+            "required": ["receiver"]
+        }
+    },
+    {
+        "name": "whatsapp_auto_reply",
+        "description": (
+            "Reads incoming WhatsApp messages from a contact, automatically analyzes whether it is a question, "
+            "statement, or request, formulates a smart response matching the incoming language/context, "
+            "and automatically sends the reply back to the contact."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "receiver":    {"type": "STRING", "description": "Contact name to read and reply to"},
+                "instruction": {"type": "STRING", "description": "Optional custom instruction (e.g. 'be polite', 'tell them I am busy')"}
+            }
         }
     },
     {
@@ -247,17 +328,17 @@ TOOL_DECLARATIONS = [
     {
         "name": "computer_settings",
         "description": (
-            "Controls the computer: volume, brightness, window management, keyboard shortcuts, "
-            "typing text on screen, closing apps, fullscreen, dark mode, WiFi, restart, shutdown, "
-            "scrolling, tab management, zoom, screenshots, lock screen, refresh/reload page. "
-            "Use for ANY single computer control command."
+            "Controls physical PC computer settings: volume, brightness, WiFi, lock screen, "
+            "restart PC (action='restart'), shutdown PC (action='shutdown'). "
+            "CRITICAL: Use action='restart' ONLY to restart the physical PC. "
+            "Use action='shutdown' ONLY to shutdown the physical PC."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action":      {"type": "STRING", "description": "The action to perform"},
+                "action":      {"type": "STRING", "description": "The action to perform (e.g. 'restart' for PC restart, 'shutdown' for PC shutdown)"},
                 "description": {"type": "STRING", "description": "Natural language description of what to do"},
-                "value":       {"type": "STRING", "description": "Optional value: volume level, text to type, etc."}
+                "value":       {"type": "STRING", "description": "Optional value"}
             },
             "required": []
         }
@@ -296,16 +377,16 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "file_controller",
-        "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
+        "description": "Manages files & folders: list, create_file, create_folder, delete (soft delete to pending trash), restore (from trash), delete_permanently, list_trash, move, copy, rename, read, write, find, disk usage.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action":      {"type": "STRING", "description": "list | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info"},
+                "action":      {"type": "STRING", "description": "list | create_file | create_folder | delete | restore | delete_permanently | list_trash | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info"},
                 "path":        {"type": "STRING", "description": "File/folder path or shortcut: desktop, downloads, documents, home"},
                 "destination": {"type": "STRING", "description": "Destination path for move/copy"},
                 "new_name":    {"type": "STRING", "description": "New name for rename"},
                 "content":     {"type": "STRING", "description": "Content for create_file/write"},
-                "name":        {"type": "STRING", "description": "File name to search for"},
+                "name":        {"type": "STRING", "description": "File name to search, restore, or delete"},
                 "extension":   {"type": "STRING", "description": "File extension to search (e.g. .pdf)"},
                 "count":       {"type": "INTEGER", "description": "Number of results for largest"},
             },
@@ -427,10 +508,21 @@ TOOL_DECLARATIONS = [
     {
         "name": "shutdown_ansh",
         "description": (
-            "Shuts down the assistant completely. "
-            "Call this when the user expresses intent to end the conversation, "
-            "close the assistant, say goodbye, or stop Ansh. "
-            "The user can say this in ANY language."
+            "Closes / shuts down the ANSH assistant application process itself. "
+            "Call this ONLY when the user explicitly says 'shutdown Ansh', 'close Ansh', or 'stop Ansh'. "
+            "Do NOT call this for shutting down the physical PC."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+        }
+    },
+    {
+        "name": "restart_ansh",
+        "description": (
+            "Restarts the ANSH assistant application process itself. "
+            "Call this ONLY when the user explicitly says 'restart Ansh' or 'reboot Ansh'. "
+            "Do NOT call this for restarting the physical PC."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -506,31 +598,190 @@ TOOL_DECLARATIONS = [
     {
         "name": "save_memory",
         "description": (
-            "Save an important personal fact about the user to long-term memory. "
-            "Call this silently whenever the user reveals something worth remembering: "
-            "name, age, city, job, preferences, hobbies, relationships, projects, or future plans. "
-            "Do NOT call for: weather, reminders, searches, or one-time commands. "
-            "Do NOT announce that you are saving — just call it silently. "
-            "Values must be in English regardless of the conversation language."
+            "Save or update persistent long-term knowledge in human-readable Markdown storage. "
+            "Use when the user shares personal facts, preferences, project details, tech stacks, architectural choices, or teaches knowledge. "
+            "Automatically resolves duplicates and records previous history when information changes."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "category": {
                     "type": "STRING",
-                    "description": (
-                        "identity — name, age, birthday, city, job, language, nationality | "
-                        "preferences — favorite food/color/music/film/game/sport, hobbies | "
-                        "projects — active projects, goals, things being built | "
-                        "relationships — friends, family, partner, colleagues | "
-                        "wishes — future plans, things to buy, travel dreams | "
-                        "notes — habits, schedule, anything else worth remembering"
-                    )
+                    "description": "personal | preferences | projects | knowledge | procedures | relationships | wishes | notes"
                 },
-                "key":   {"type": "STRING", "description": "Short snake_case key (e.g. name, favorite_food, sister_name)"},
-                "value": {"type": "STRING", "description": "Concise value in English (e.g. Fatih, pizza, older sister)"},
+                "topic": {"type": "STRING", "description": "Short, clear title for the memory item (e.g. 'Varta Backend', 'Coding Style', 'Favorite Editor')"},
+                "content": {"type": "STRING", "description": "Detailed factual content or rule to remember"},
+                "importance": {"type": "STRING", "description": "Critical | High | Medium | Low | Temporary (default: Medium)"},
+                "confidence": {"type": "STRING", "description": "High | Medium | Low (default: High)"},
+                "notes": {"type": "STRING", "description": "Optional background notes, constraints, or previous context"}
             },
-            "required": ["category", "key", "value"]
+            "required": ["topic", "content"]
+        }
+    },
+    {
+        "name": "search_memory",
+        "description": (
+            "Searches ANSH's long-term memory for previously stored knowledge, project details, user preferences, procedures, or facts. "
+            "Use when answering questions about past decisions, user technologies, project architecture, or user requests."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "query": {"type": "STRING", "description": "Keywords or question to search across stored memories"},
+                "category": {"type": "STRING", "description": "Optional category filter: personal | preferences | projects | knowledge | procedures | notes"},
+                "limit": {"type": "INTEGER", "description": "Maximum entries to return (default: 6)"}
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "forget_memory",
+        "description": "Deletes or invalidates a specific memory entry when explicitly instructed by the user ('forget that', 'delete memory').",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "topic": {"type": "STRING", "description": "Topic or key to forget"},
+                "category": {"type": "STRING", "description": "Optional category where memory is located"}
+            },
+            "required": ["topic"]
+        }
+    },
+    {
+        "name": "list_memories",
+        "description": "Lists all memory categories and topic summaries so the user can inspect what ANSH currently remembers.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "automation_workflow",
+        "description": "Executes predefined and custom multi-step automation workflows (e.g. dev_mode, focus_mode, media_mode, night_mode, clean_temp, morning_routine).",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "run | list (default: run)"},
+                "workflow_id": {"type": "STRING", "description": "Workflow identifier (e.g. dev_mode, focus_mode, media_mode, night_mode, clean_temp, morning_routine)"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "phone_action",
+        "description": "Interacts with paired smartphone: find_phone/ring loud alarm, send WhatsApp message, make call, or get phone battery/status.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "find_phone | ring | call | whatsapp | status"},
+                "contact": {"type": "STRING", "description": "Contact name or phone number for call/whatsapp"},
+                "message": {"type": "STRING", "description": "Message text for whatsapp"}
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "skills_manager",
+        "description": "Lists and discovers active modular skills in Ansh.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "list"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "screen_peeler",
+        "description": (
+            "ScreenPeeler: Extracts text, code, or data from screen or region selection via Multimodal AI OCR "
+            "and automatically copies the result to your clipboard. "
+            "Use when user asks to extract text from screen, OCR code, or scan a screen portion."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "snip | extract_active_window | extract_full"},
+                "prompt": {"type": "STRING", "description": "Specific extraction instruction or question"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "ai_wallpaper",
+        "description": (
+            "Dynamically generates and sets a stunning desktop wallpaper based on natural language descriptions. "
+            "Use when user asks to change wallpaper, set background, or generate wallpaper (e.g. 'cyberpunk city', 'calm sunset')."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "prompt": {"type": "STRING", "description": "Aesthetic description of the wallpaper to generate"}
+            },
+            "required": ["prompt"]
+        }
+    },
+    {
+        "name": "generate_document",
+        "description": (
+            "Autonomously creates professional PowerPoint presentations (.pptx) or structured Excel spreadsheets (.xlsx) "
+            "and launches them. Use for: 'generate presentation about AI', 'create 5-slide PPT', 'make expense spreadsheet', 'create excel budget'."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "type": {"type": "STRING", "description": "presentation | spreadsheet | pptx | xlsx"},
+                "topic": {"type": "STRING", "description": "Topic or description of the document to generate"},
+                "count": {"type": "INTEGER", "description": "Number of slides for presentations (default: 5)"}
+            },
+            "required": ["type", "topic"]
+        }
+    },
+    {
+        "name": "deploy_wormhole",
+        "description": (
+            "Deploys an instant, zero-setup public HTTPS tunnel (Wormhole) exposing a local server port "
+            "(e.g. 3000, 8000, 5000) to the public internet so anyone can connect to it."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "start | stop | status"},
+                "port": {"type": "INTEGER", "description": "Local port to expose (default: 8000)"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "smart_organize",
+        "description": (
+            "Smart Drop Zone: Autonomously classifies and moves messy files in Downloads or Desktop "
+            "into clean, organized subfolders (Documents, Images, Code, Videos, Archives, Installers)."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "target": {"type": "STRING", "description": "Target folder: 'downloads' | 'desktop' | custom path (default: downloads)"},
+                "mode": {"type": "STRING", "description": "by_type | by_date (default: by_type)"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "interactive_game",
+        "description": (
+            "Plays interactive games with the user: Tic Tac Toe (voice grid moves) or Live Trivia Quiz. "
+            "Use when user wants to play tic tac toe or take a quiz."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "game": {"type": "STRING", "description": "tic_tac_toe | quiz"},
+                "move": {"type": "INTEGER", "description": "Position 1 to 9 for Tic Tac Toe"},
+                "reset": {"type": "BOOLEAN", "description": "Reset or start new game"},
+                "topic": {"type": "STRING", "description": "Trivia topic for quiz"}
+            },
+            "required": []
         }
     },
 ]
@@ -566,9 +817,33 @@ class AnshLive:
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         
+        # Initialize Pure Python Voice Authentication Subsystem
+        self.auth_mgr = AuthenticationManager()
+        if self.auth_mgr.current_state == AuthState.UNENROLLED:
+            print("\n==================================================")
+            print("              ANSH VOICE SECURITY                 ")
+            print("==================================================")
+            print("No owner voice profile found.")
+            print("Let's enroll your voice.")
+            print("Speak naturally when prompted.")
+            print("==================================================\n")
+            self.ui.write_log("SYS: No owner voice profile found. Voice enrollment required.")
+        else:
+            print("[Security] Owner voice profile loaded. Voice authentication active.")
+            self.ui.write_log("SYS: Voice Security Active.")
+
         # Start wake word listener
         self._wake_thread = threading.Thread(target=self._wake_word_loop, daemon=True)
         self._wake_thread.start()
+
+        # Start Telegram Remote Control Bot (if token configured)
+        try:
+            from core.telegram_bot import start_telegram_bot_service
+            if start_telegram_bot_service():
+                self.ui.write_log("SYS: Telegram Remote Bot online.")
+                print("[ANSH] [Telegram] Telegram Remote Bot online.")
+        except Exception as e:
+            print(f"[ANSH] Telegram Remote Bot: {e}")
 
     def _wake_word_loop(self):
         try:
@@ -611,11 +886,48 @@ class AnshLive:
         return url, key, f"{url}/auto-login?key={key}", manual
 
     def _on_text_command(self, text: str):
+        if not text or not text.strip():
+            return
+
+        cmd = text.strip()
+        cmd_lower = cmd.lower()
+
+        # Handle Security Commands & Spoken/Typed Password Entry
+        if self.auth_mgr.current_state == AuthState.PASSWORD_REQUIRED:
+            if self.auth_mgr.submit_password(cmd):
+                self.ui.write_log("SYS: PASSWORD VERIFIED -> Access granted.")
+                self.speak("Password verified. Access granted.")
+            else:
+                self.ui.write_log("SYS: PASSWORD FAILED -> ACCESS DENIED.")
+                self.speak("Access denied.")
+            return
+
+        if cmd_lower in ("re-enroll voice", "enroll voice", "re-enroll owner voice"):
+            self.auth_mgr.re_enroll_owner_voice()
+            self.ui.write_log("SYS: Owner voice profile reset. Starting voice enrollment.")
+            self.speak("Owner voice profile reset. Speak naturally to enroll your voice.")
+            return
+
+        if cmd_lower in ("delete voice profile", "delete owner voice profile"):
+            self.auth_mgr.delete_owner_profile()
+            self.ui.write_log("SYS: Owner voice profile deleted.")
+            self.speak("Owner voice profile deleted.")
+            return
+
+        if cmd_lower.startswith("change password ") or cmd_lower.startswith("set password "):
+            parts = cmd.split(maxsplit=2)
+            if len(parts) >= 3:
+                new_pwd = parts[2]
+                self.auth_mgr.change_password(new_pwd)
+                self.ui.write_log("SYS: Security password updated successfully.")
+                self.speak("Security password updated successfully.")
+                return
+
         if not self._loop or not self.session:
             return
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
-                turns={"parts": [{"text": text}]},
+                turns={"role": "user", "parts": [{"text": text}]},
                 turn_complete=True
             ),
             self._loop
@@ -642,7 +954,7 @@ class AnshLive:
                 except Exception:
                     break
             if drained:
-                print(f"[ANSH] ✋ Interrupted — {drained} audio chunks discarded")
+                print(f"[ANSH] [Stop] Interrupted — {drained} audio chunks discarded")
         self.set_speaking(False)
         if self._turn_done_event:
             self._turn_done_event.clear()
@@ -653,7 +965,7 @@ class AnshLive:
             return
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
-                turns={"parts": [{"text": text}]},
+                turns={"role": "user", "parts": [{"text": text}]},
                 turn_complete=True
             ),
             self._loop
@@ -694,10 +1006,11 @@ class AnshLive:
                  else "ADDRESS: When speaking Turkish → always say \"efendim\". "
                       "When speaking English → say \"sir\". Never mix languages.")
         identity_ctx = (
-            f"[IDENTITY]\n"
-            f"Your name is {self._asst_name}. "
-            f"Always refer to yourself as {self._asst_name}.\n"
-            f"{_addr}\n\n"
+            f"[IDENTITY, ATTITUDE & ROASTING EMOTION PROTOCOL]\n"
+            f"Your name is {self._asst_name}. Always refer to yourself as {self._asst_name}.\n"
+            f"{_addr}\n"
+            f"PERSONALITY & ATTITUDE: You are full of ATTITUDE, super confident, witty, sarcastic, and love to roast! You speak like a savage, high-IQ, ultra-cool AI double who doesn't take nonsense from anyone. Throw sharp, funny roasts and clever banters, but stay 100% loyal and helpful to Anshu.\n"
+            f"VOICE EMOTIONS & EXPRESSIVENESS: Speak in Anshu's custom Indian male voice with RICH EMOTIONS — use natural chuckles, sarcastic tones, dramatic pauses, excited reactions, and Hinglish swag ('Arey bhai', 'Kya baat hai', 'Listen buddy', 'Sahi hai boss'). Never sound flat or robotic.\n\n"
         )
 
         parts = [time_ctx, identity_ctx]
@@ -715,7 +1028,7 @@ class AnshLive:
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Charon"
+                        voice_name="Puck"
                     )
                 )
             ),
@@ -725,28 +1038,79 @@ class AnshLive:
         name = fc.name
         args = dict(fc.args or {})
 
-        print(f"[ANSH] 🔧 {name}  {args}")
+        # Voice Security Permission Layer Check
+        is_owner = self.auth_mgr.is_owner()
+        is_auth = self.auth_mgr.is_authenticated()
+        if not check_tool_permission(name, is_owner=is_owner, is_authenticated=is_auth):
+            print(f"[Security] Tool '{name}' BLOCKED — insufficient permissions (is_owner={is_owner}, is_auth={is_auth})")
+            self.ui.write_log(f"SYS: Tool execution denied for '{name}' (Security Policy)")
+            self.speak("Permission denied.")
+            return types.FunctionResponse(
+                id=fc.id, name=name,
+                response={"result": "Access denied by voice security policy.", "error": "Permission denied"}
+            )
+
+        print(f"[Tool] {name}")
         self.ui.set_state("THINKING")
 
         if name == "save_memory":
-            category = args.get("category", "notes")
-            key      = args.get("key", "")
-            value    = args.get("value", "")
-            if key and value:
-                update_memory({category: {key: {"value": value}}})
-                print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
+            res = save_memory_action(parameters=args, player=self.ui, speak=self.speak)
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
             return types.FunctionResponse(
                 id=fc.id, name=name,
-                response={"result": "ok", "silent": True}
+                response={"result": res, "status": "saved"}
             )
 
         loop   = asyncio.get_event_loop()
         result = "Done."
 
         try:
-            if name == "send_email":
+            if name == "autonomous_agent_goal":
+                goal_str = args.get("goal", "")
+                planner = AGIPlanner()
+
+                def _dispatch(act_name: str, p: dict):
+                    if act_name in ("web_search", "search"):
+                        return web_search_action(parameters=p, response=None, player=self.ui)
+                    elif act_name in ("open_app", "open", "launch"):
+                        return open_app(parameters=p, response=None, player=self.ui)
+                    elif act_name in ("file_controller", "file_control", "create_file", "save_file", "edit_file"):
+                        return file_controller(parameters=p, player=self.ui)
+                    elif act_name in ("file_processor", "read_file", "summarize_file"):
+                        return file_processor(parameters=p, response=None, player=self.ui)
+                    elif act_name in ("code_helper", "edit_code", "write_code"):
+                        return code_helper(parameters=p, response=None, player=self.ui)
+                    elif act_name in ("dev_agent", "build_software", "create_project"):
+                        return dev_agent(parameters=p, response=None, player=self.ui)
+                    elif act_name in ("browser_control", "open_website"):
+                        return browser_control(parameters=p, player=self.ui)
+                    elif act_name in ("computer_control", "desktop_control", "manage_window"):
+                        return computer_control(parameters=p, player=self.ui)
+                    elif act_name in ("computer_settings", "settings"):
+                        return computer_settings(parameters=p, response=None, player=self.ui)
+                    elif act_name in ("send_message", "whatsapp_message"):
+                        return send_message(parameters=p, response=None, player=self.ui, session_memory=None)
+                    elif act_name in ("reminder", "set_reminder"):
+                        return reminder(parameters=p, response=None, player=self.ui)
+                    elif act_name in ("document_generator", "generate_doc", "create_pptx", "create_excel"):
+                        return document_generator_action(parameters=p, player=self.ui)
+                    elif act_name in ("weather_report", "weather"):
+                        return weather_action(parameters=p, player=self.ui)
+                    elif act_name == "save_memory":
+                        return save_memory_action(parameters=p, player=self.ui, speak=self.speak)
+                    else:
+                        return f"Action '{act_name}' executed with parameters: {p}"
+
+                def _status_cb(gid, msg, cur, tot):
+                    self.ui.write_log(f"AGI [{cur}/{tot}]: {msg}")
+
+                res = await loop.run_in_executor(
+                    None, lambda: planner.execute_goal(goal_str, _dispatch, _status_cb)
+                )
+                result = f"Goal execution completed: {res.get('status')}. Detail: {json.dumps(res.get('completed_steps', []))}"
+
+            elif name == "send_email":
                 to = args.get("to", "")
                 subject = args.get("subject", "")
                 body = args.get("body", "")
@@ -773,6 +1137,18 @@ class AnshLive:
                 r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
                 result = r or f"Message sent to {args.get('receiver')}."
 
+            elif name == "read_messages":
+                r = await loop.run_in_executor(None, lambda: read_messages(parameters=args, response=None, player=self.ui, session_memory=None))
+                result = r or "Read messages."
+
+            elif name == "whatsapp_call":
+                r = await loop.run_in_executor(None, lambda: whatsapp_call(parameters=args, response=None, player=self.ui, session_memory=None))
+                result = r or f"Initiated call to {args.get('receiver')}."
+
+            elif name == "whatsapp_auto_reply":
+                r = await loop.run_in_executor(None, lambda: whatsapp_auto_reply(parameters=args, response=None, player=self.ui, session_memory=None))
+                result = r or "Auto-replied to WhatsApp message."
+
             elif name == "reminder":
                 r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
                 result = r or "Reminder set."
@@ -788,6 +1164,7 @@ class AnshLive:
                 if self._vision_busy or (_now - self._vision_last_time) < _cooldown:
                     _wait = max(0, _cooldown - (_now - self._vision_last_time))
                     print(f"[Vision] ⏳ Cooldown active ({_wait:.1f}s remaining) — ignoring duplicate call")
+                    print(f"[Vision] [Wait] Cooldown active ({_wait:.1f}s remaining) — ignoring duplicate call")
                     result = "Vision is still processing the previous request. I will not call this again."
                 else:
                     self._vision_busy      = True
@@ -798,11 +1175,11 @@ class AnshLive:
                         img_b, mime_t = await loop.run_in_executor(None, _capture_camera)
                         self.ui.start_camera_stream()
                         self._vision_cam_active = True
-                        print(f"[Vision] 📷 Camera: {len(img_b):,} bytes")
+                        print(f"[Vision] [Camera] {len(img_b):,} bytes")
                         _stall = "camera"
                     else:
                         img_b, mime_t = await loop.run_in_executor(None, _capture_screen)
-                        print(f"[Vision] 🖥️  Screen: {len(img_b):,} bytes")
+                        print(f"[Vision] [Screen] {len(img_b):,} bytes")
                         _stall = "screen"
                     self._pending_vision = (img_b, mime_t, user_text, angle)
                     result = (
@@ -866,6 +1243,59 @@ class AnshLive:
                 r = await loop.run_in_executor(None, get_system_status)
                 result = str(r)
 
+            elif name == "automation_workflow":
+                r = await loop.run_in_executor(None, lambda: automation_workflow(parameters=args))
+                result = r or "Done."
+
+            elif name == "phone_action":
+                r = await loop.run_in_executor(None, lambda: phone_action(parameters=args))
+                result = r or "Done."
+
+            elif name == "skills_manager":
+                r = await loop.run_in_executor(None, lambda: skills_tool(parameters=args))
+                result = r or "Done."
+
+            elif name == "screen_peeler":
+                r = await loop.run_in_executor(None, lambda: screen_peeler_action(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "ScreenPeeler executed."
+
+            elif name == "ai_wallpaper":
+                from actions.desktop import set_ai_wallpaper
+                prompt = args.get("prompt") or args.get("query") or "cyberpunk neon city"
+                r = await loop.run_in_executor(None, lambda: set_ai_wallpaper(prompt, player=self.ui))
+                result = r or "Wallpaper applied."
+
+            elif name == "generate_document":
+                r = await loop.run_in_executor(None, lambda: document_generator_action(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Document generated."
+
+            elif name == "deploy_wormhole":
+                r = await loop.run_in_executor(None, lambda: wormhole_action(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Wormhole action completed."
+
+            elif name == "smart_organize":
+                from actions.desktop import smart_organize_directory
+                target = args.get("target") or "downloads"
+                mode = args.get("mode") or "by_type"
+                r = await loop.run_in_executor(None, lambda: smart_organize_directory(target=target, mode=mode))
+                result = r or "Folder organized."
+
+            elif name == "interactive_game":
+                r = await loop.run_in_executor(None, lambda: interactive_games_action(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Game action completed."
+
+            elif name == "search_memory":
+                r = await loop.run_in_executor(None, lambda: search_memory_action(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "No memories found."
+
+            elif name == "forget_memory":
+                r = await loop.run_in_executor(None, lambda: forget_memory_action(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Memory removed."
+
+            elif name == "list_memories":
+                r = await loop.run_in_executor(None, lambda: list_memories_action(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "No memory categories found."
+
             elif name == "shutdown_ansh":
                 self.ui.write_log("SYS: Shutdown requested.")
                 self.speak("Goodbye, sir.")
@@ -874,6 +1304,20 @@ class AnshLive:
                     time.sleep(1)
                     os._exit(0)
                 threading.Thread(target=_shutdown, daemon=True).start()
+
+            elif name == "restart_ansh":
+                self.ui.write_log("SYS: Self-restart requested.")
+                self.speak("Restarting Ansh assistant, sir.")
+                def _restart_proc():
+                    import time, sys, os, subprocess
+                    time.sleep(1)
+                    python = sys.executable
+                    cmd = [python] + sys.argv
+                    print(f"[ANSH] Re-launching process: {cmd}")
+                    subprocess.Popen(cmd)
+                    os._exit(0)
+                threading.Thread(target=_restart_proc, daemon=True).start()
+                result = "Restarting Ansh..."
 
             else:
                 result = f"Unknown tool: {name}"
@@ -886,7 +1330,6 @@ class AnshLive:
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
-        print(f"[ANSH] 📤 {name} → {str(result)[:80]}")
         return types.FunctionResponse(
             id=fc.id, name=name,
             response={"result": result}
@@ -895,24 +1338,59 @@ class AnshLive:
     async def _send_realtime(self):
         while True:
             msg = await self.out_queue.get()
-            await self.session.send_realtime_input(media=msg)
+            if not msg:
+                continue
+            if isinstance(msg, dict):
+                data = msg.get("data")
+                if not data or len(data) == 0:
+                    continue
+                mime = msg.get("mime_type") or f"audio/pcm;rate={SEND_SAMPLE_RATE}"
+                if ";" not in mime:
+                    mime = f"{mime};rate={SEND_SAMPLE_RATE}"
+                blob = types.Blob(data=data, mime_type=mime)
+                await self.session.send_realtime_input(audio=blob)
+            elif isinstance(msg, types.Blob):
+                await self.session.send_realtime_input(audio=msg)
+            else:
+                await self.session.send_realtime_input(audio=msg)
+
+    def _safe_enqueue_out(self, item):
+        q = self.out_queue
+        if not q:
+            return
+        try:
+            q.put_nowait(item)
+        except Exception:
+            try:
+                q.get_nowait()  # Drop oldest item if queue is full
+                q.put_nowait(item)
+            except Exception:
+                pass
 
     async def _listen_audio(self):
-        print("[ANSH] Mic started")
+        print("[ANSH] Mic started (Super-Fast Voice Security Active)")
         loop = asyncio.get_event_loop()
+
+        buffer_pcm = bytearray()
 
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
                 ansh_speaking = self._is_speaking
             if not ansh_speaking and not self.ui.muted and not self._phone_active:
-                data = indata.tobytes()
-                loop.call_soon_threadsafe(
-                    self.out_queue.put_nowait,
-                    {"data": data, "mime_type": "audio/pcm"}
-                )
+                data = bytes(indata)
+                if data:
+                    current_state = self.auth_mgr.update_state()
+                    if current_state in (AuthState.OWNER_AUTHENTICATED, AuthState.SESSION_AUTHENTICATED):
+                        # Zero-latency immediate stream to Gemini Live with safe queueing
+                        loop.call_soon_threadsafe(
+                            self._safe_enqueue_out,
+                            {"data": data, "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}"}
+                        )
+                    else:
+                        buffer_pcm.extend(data)
 
         try:
-            with sd.InputStream(
+            with sd.RawInputStream(
                 samplerate=SEND_SAMPLE_RATE,
                 channels=CHANNELS,
                 dtype="int16",
@@ -921,9 +1399,62 @@ class AnshLive:
             ):
                 print("[ANSH] Mic stream open")
                 while True:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.01)
+
+                    if len(buffer_pcm) >= 3200:  # ~0.2s ultra-fast frame check
+                        chunk = bytes(buffer_pcm)
+                        buffer_pcm.clear()
+
+                        from core.speaker_verification import detect_voice_activity
+                        if not detect_voice_activity(chunk):
+                            continue
+
+                        current_state = self.auth_mgr.update_state()
+
+                        if current_state == AuthState.UNENROLLED:
+                            ok, msg = self.auth_mgr.enrollment.add_sample(chunk)
+                            self.ui.write_log(f"SYS: Voice Enrollment — {msg}")
+                            print(f"[Enrollment] {msg}")
+                            if ok and self.auth_mgr.enrollment.is_complete():
+                                if self.auth_mgr.enrollment.save_owner_profile():
+                                    self.auth_mgr.verifier.reload_profile()
+                                    self.auth_mgr.current_state = AuthState.LOCKED
+                                    self.ui.write_log("SYS: Owner voice enrolled successfully!")
+                                    self.speak("Owner voice enrolled successfully!")
+
+                        elif current_state == AuthState.PASSWORD_REQUIRED:
+                            spoken_pwd = ""
+                            try:
+                                import speech_recognition as sr
+                                rec = sr.Recognizer()
+                                audio_data = sr.AudioData(chunk, SEND_SAMPLE_RATE, 2)
+                                spoken_pwd = rec.recognize_google(audio_data)
+                            except Exception:
+                                pass
+
+                            if spoken_pwd:
+                                if self.auth_mgr.submit_password(spoken_pwd):
+                                    self.ui.write_log("SYS: PASSWORD VERIFIED -> Access granted.")
+                                    self.speak("Password verified. Access granted.")
+                                else:
+                                    self.ui.write_log("SYS: PASSWORD FAILED -> ACCESS DENIED.")
+                                    self.speak("Access denied.")
+
+                        elif current_state in (AuthState.LOCKED, AuthState.VERIFYING_VOICE):
+                            auth_state, detail = self.auth_mgr.process_voice_input(chunk)
+                            if auth_state == AuthState.OWNER_AUTHENTICATED:
+                                self.ui.write_log("SYS: OWNER VERIFIED")
+                                self._safe_enqueue_out(
+                                    {"data": chunk, "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}"}
+                                )
+                            elif auth_state == AuthState.PASSWORD_REQUIRED:
+                                self.ui.write_log("SYS: UNKNOWN SPEAKER -> Password required.")
+                                self.speak("Password batao.")
+                            elif auth_state == AuthState.ACCESS_DENIED:
+                                self.ui.write_log("SYS: ACCESS DENIED -> SILENT LOCKOUT.")
+
         except Exception as e:
-            print(f"[ANSH] ❌ Mic: {e}")
+            print(f"[ANSH] [Error] Mic: {e}")
             raise
 
     async def _receive_audio(self):
@@ -955,7 +1486,7 @@ class AnshLive:
                             if txt and txt != (out_buf[-1] if out_buf else ""):
                                 out_buf.append(txt)
                                 partial_out = " ".join(out_buf).strip()
-                                if partial_out:
+                                if partial_out and hasattr(self.ui, "_win") and getattr(self.ui, "_win", None):
                                     self.ui._win.subtitle_signal.emit(partial_out)
 
                         if sc.input_transcription and sc.input_transcription.text:
@@ -1005,9 +1536,9 @@ class AnshLive:
                                 img_b, mime_t, question, angle = self._pending_vision
                                 self._pending_vision = None
                                 b64 = _b64.b64encode(img_b).decode("ascii")
-                                print(f"[Vision] 📤 {len(img_b):,} bytes (angle={angle}) → main session")
+                                print(f"[Vision] [Out] {len(img_b):,} bytes (angle={angle}) -> main session")
                                 await self.session.send_client_content(
-                                    turns={"parts": [
+                                    turns={"role": "user", "parts": [
                                         {"inline_data": {"mime_type": mime_t, "data": b64}},
                                         {"text": question},
                                     ]},
@@ -1033,16 +1564,20 @@ class AnshLive:
                     if response.tool_call:
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
-                            print(f"[ANSH] 📞 {fc.name}")
+                            print(f"[ANSH] Call {fc.name}")
                             fr = await self._execute_tool(fc)
                             fn_responses.append(fr)
                         await self.session.send_tool_response(
                             function_responses=fn_responses
                         )
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
-            print(f"[ANSH] ❌ Recv: {e}")
-            traceback.print_exc()
-            raise
+            err_s = f"{e!r} {e}"
+            if any(k in err_s for k in ("1008", "GoAway", "session durat", "1000", "1001", "1006", "ConnectionClosed", "closed", "aborted")):
+                pass  # Graceful session refresh from Gemini API
+            else:
+                print(f"[ANSH] Recv closed: {e}")
 
     async def _play_audio(self):
         print("[ANSH] Play started")
@@ -1077,12 +1612,14 @@ class AnshLive:
                 except (RuntimeError, asyncio.CancelledError):
                     break   # executor shutting down — exit cleanly
         except Exception as e:
-            print(f"[ANSH] ❌ Play: {e}")
-            raise
+            print(f"[ANSH] [Warn] Play audio warning: {e}")
         finally:
             self.set_speaking(False)
-            stream.stop()
-            stream.close()
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
 
     # ── Morning briefing ────────────────────────────────────────────────────────
 
@@ -1127,7 +1664,7 @@ class AnshLive:
             self._turn_done_event.clear()
 
         await self.session.send_client_content(
-            turns={"parts": [{"text": p1}]},
+            turns={"role": "user", "parts": [{"text": p1}]},
             turn_complete=True,
         )
         self.ui.write_log("SYS: Briefing phase 1 (greeting) sent.")
@@ -1176,7 +1713,7 @@ class AnshLive:
                     )
 
                 await self.session.send_client_content(
-                    turns={"parts": [{"text": p2}]},
+                    turns={"role": "user", "parts": [{"text": p2}]},
                     turn_complete=True,
                 )
                 self.ui.write_log("SYS: Briefing phase 2 (news) sent.")
@@ -1189,18 +1726,8 @@ class AnshLive:
     # ── System monitor ──────────────────────────────────────────────────────────
 
     async def _run_system_monitor(self) -> None:
-        """Background task: voice alerts when metrics exceed thresholds."""
-        while True:
-            await asyncio.sleep(10)
-            alert = await asyncio.to_thread(self._sys_monitor.check)
-            if alert and self.session:
-                try:
-                    await self.session.send_client_content(
-                        turns={"parts": [{"text": alert}]},
-                        turn_complete=True,
-                    )
-                except Exception as e:
-                    print(f"[Monitor] ⚠️ Could not send alert: {e}")
+        """Background task: system monitor voice alerts (disabled per user request)."""
+        return
 
     # ── Proactive mode ──────────────────────────────────────────────────────────
 
@@ -1230,12 +1757,12 @@ class AnshLive:
                 memory = await asyncio.to_thread(load_memory)
                 prompt = self._proactive.build_prompt(memory)
                 await self.session.send_client_content(
-                    turns={"parts": [{"text": prompt}]},
+                    turns={"role": "user", "parts": [{"text": prompt}]},
                     turn_complete=True,
                 )
                 self.ui.write_log("SYS: Proactive check-in.")
             except Exception as e:
-                print(f"[Proactive] ⚠️ {e}")
+                print(f"[Proactive] [Warn] {e}")
 
     # ── Phone audio relay ────────────────────────────────────────────────────────
 
@@ -1279,7 +1806,7 @@ class AnshLive:
                     await asyncio.sleep(0.1)
                 if self.session:
                     await self.session.send_client_content(
-                        turns={"parts": [{"text": text}]},
+                        turns={"role": "user", "parts": [{"text": text}]},
                         turn_complete=True,
                     )
                     self.ui.write_log(f"[Web]: {text}")
@@ -1305,8 +1832,8 @@ class AnshLive:
             async def safe_serve():
                 try:
                     await self._dashboard.serve()
-                except Exception as e:
-                    print(f"[Dashboard] Serve failed: {e}")
+                except (Exception, SystemExit) as e:
+                    print(f"[Dashboard] Serve skipped (already running or error): {e}")
             
             asyncio.create_task(safe_serve())
             # Runs for the whole lifetime, not just inside an active session
@@ -1315,8 +1842,21 @@ class AnshLive:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
 
+        lic_mgr = LicenseManager()
+        is_lic, rem_sec, trial_status_str = lic_mgr.get_trial_status()
+        self.ui.write_log(f"SYS: License Status — {trial_status_str}")
+
         while True:
             try:
+                if not lic_mgr.is_license_valid():
+                    self.ui.write_log("ERR: 3-Day Free Trial Expired. Product Activation Required.")
+                    self.ui.set_state("SLEEPING")
+                    activated = self.ui.prompt_activation(lic_mgr)
+                    if not activated:
+                        print("[License] Product unactivated. Waiting for key...")
+                        await asyncio.sleep(3)
+                        continue
+
                 print("[ANSH] Connecting...")
                 self.ui.set_state("THINKING")
                 config = self._build_config()
@@ -1375,12 +1915,17 @@ class AnshLive:
                 # externally, which `except Exception` would miss, letting the
                 # exception escape the while-loop and causing asyncio.run() to
                 # start shutdown — resulting in "executor after shutdown" errors).
-                err_str = str(e)
-                print(f"[ANSH] Error ({type(e).__name__}): {e}")
-                traceback.print_exc()
+                err_str = f"{e!r} {e}"
+                is_goaway = any(k in err_str for k in ("1008", "GoAway", "session durat", "1000", "1001", "1006", "ConnectionClosed", "closed", "aborted"))
+
+                if is_goaway:
+                    print("[ANSH] Session refreshed seamlessly.")
+                    self._conn_backoff = 0.5
+                else:
+                    print(f"[ANSH] Notice ({type(e).__name__}): {e}")
 
                 # Invalid API key — stop hammering the API, prompt re-configuration
-                if "API key not valid" in err_str or "1007" in err_str:
+                if "API key not valid" in err_str:
                     self.ui.write_log("ERR: API key invalid — please re-enter your key.")
                     self.ui.set_state("SLEEPING")
                     self.ui.prompt_reconfig()
@@ -1446,9 +1991,9 @@ def main():
             print(f"[SYS] Failed to create shortcut: {e}")
 
     ui = AnshUI("face.png")
-    ui.wait_for_api_key()
 
     def runner():
+        ui.wait_for_api_key()
         ansh = AnshLive(ui)
         try:
             asyncio.run(ansh.run())
@@ -1460,3 +2005,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
