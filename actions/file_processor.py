@@ -32,14 +32,18 @@ def _get_api_key() -> str:
 
 
 def _gemini_client():
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
+    try:
+        from core.task_llm import get_task_llm
+        return get_task_llm()
+    except Exception:
+        from google import genai
+        _c = genai.Client(api_key=_get_api_key())
 
-    class _W:
-        def generate_content(self, contents):
-            return _c.models.generate_content(model="gemini-2.0-flash", contents=contents)
+        class _W:
+            def generate_content(self, contents):
+                return _c.models.generate_content(model="gemini-3.6-flash", contents=contents)
 
-    return _W()
+        return _W()
 
 
 def _detect_type(path: Path) -> str:
