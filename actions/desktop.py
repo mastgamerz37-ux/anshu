@@ -142,8 +142,8 @@ Output ONLY the Python code. No explanation, no markdown, no backticks.
 Task: {task}"""
 
     try:
-        response = _client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
-        code = response.text.strip()
+        from core.task_llm import call_task_llm
+        code = call_task_llm(prompt=prompt).strip()
         if code.startswith("```"):
             lines = code.split("\n")
             code  = "\n".join(lines[1:-1]).strip()
@@ -233,6 +233,102 @@ for (var i = 0; i < allDesktops.length; i++) {{
 
     except Exception as e:
         return f"Could not set wallpaper: {e}"
+
+
+def set_ai_wallpaper(prompt: str, player=None) -> str:
+    """
+    Generate or fetch a high-res AI wallpaper matching the prompt and set it as desktop background.
+    """
+    try:
+        import urllib.parse
+        import urllib.request
+
+        if player:
+            player.write_log(f"[AI Wallpaper] Generating: {prompt[:30]}...")
+
+        # URL encode prompt for Pollinations 1080p generation
+        encoded_prompt = urllib.parse.quote(prompt.strip())
+        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1920&height=1080&nologo=true&seed={int(datetime.now().timestamp())}"
+
+        tmp = Path(tempfile.mktemp(suffix=".jpg"))
+        req = urllib.request.Request(image_url, headers={"User-Agent": "ANSH-AI-Wallpaper/1.0"})
+        with urllib.request.urlopen(req, timeout=25) as response, open(str(tmp), 'wb') as out_file:
+            out_file.write(response.read())
+
+        result = set_wallpaper(str(tmp))
+        return f"AI Wallpaper generated and applied: '{prompt}'\n{result}"
+    except Exception as e:
+        # Fallback to Unsplash source
+        try:
+            import urllib.parse
+            import urllib.request
+            tag = urllib.parse.quote(prompt.split()[0] if prompt else "wallpaper")
+            fallback_url = f"https://source.unsplash.com/1920x1080/?{tag}"
+            tmp = Path(tempfile.mktemp(suffix=".jpg"))
+            urllib.request.urlretrieve(fallback_url, str(tmp))
+            result = set_wallpaper(str(tmp))
+            return f"Wallpaper applied from photo library for '{prompt}'.\n{result}"
+        except Exception as e2:
+            return f"Could not generate AI wallpaper: {e}"
+
+
+def smart_organize_directory(target: str = "downloads", mode: str = "by_type") -> str:
+    """
+    Smart Drop Zone: Organize any directory (Downloads, Desktop, Documents, or custom path)
+    into categorized subfolders.
+    """
+    t_lower = target.lower().strip()
+    if t_lower in ("downloads", "download"):
+        target_dir = Path.home() / "Downloads"
+    elif t_lower in ("desktop",):
+        target_dir = _get_desktop()
+    elif t_lower in ("documents", "doc", "docs"):
+        target_dir = Path.home() / "Documents"
+    else:
+        target_dir = Path(target).expanduser().resolve()
+
+    if not target_dir.exists():
+        return f"Directory not found: {target}"
+
+    skip_exts = _SKIP_EXTENSIONS.get(_OS, set())
+    moved, skipped = [], []
+
+    for item in target_dir.iterdir():
+        if item.is_dir() or item.name.startswith("."):
+            continue
+        if item.suffix.lower() in skip_exts:
+            continue
+
+        if mode == "by_date":
+            mtime = datetime.fromtimestamp(item.stat().st_mtime)
+            folder_name = mtime.strftime("%Y-%m")
+        else:
+            ext = item.suffix.lower()
+            folder_name = "Others"
+            for folder, exts in FILE_TYPE_MAP.items():
+                if ext in exts:
+                    folder_name = folder
+                    break
+
+        cat_dir = target_dir / folder_name
+        cat_dir.mkdir(exist_ok=True)
+        new_path = cat_dir / item.name
+
+        if new_path.exists():
+            skipped.append(item.name)
+            continue
+
+        shutil.move(str(item), str(new_path))
+        moved.append(f"{item.name} ➔ {folder_name}/")
+
+    result = f"Organized '{target_dir.name}' ({mode}): {len(moved)} files moved into categorized hubs."
+    if moved:
+        result += "\n" + "\n".join(moved[:10])
+        if len(moved) > 10:
+            result += f"\n... and {len(moved) - 10} more."
+    if skipped:
+        result += f"\n{len(skipped)} file(s) skipped due to name conflict."
+    return result
 
 
 def set_wallpaper_from_url(url: str) -> str:
@@ -434,7 +530,16 @@ def desktop_control(
         player.write_log(f"[desktop] {action or task[:40]}")
 
     try:
-        if action == "wallpaper":
+        if action in ("ai_wallpaper", "wallpaper_ai"):
+            prompt = params.get("prompt") or params.get("query") or params.get("description") or "cyberpunk neon city"
+            return set_ai_wallpaper(prompt, player=player)
+
+        elif action in ("smart_organize", "organize_downloads", "organize_folder", "smart_drop_zone"):
+            target = params.get("target") or params.get("path") or "downloads"
+            mode = params.get("mode", "by_type")
+            return smart_organize_directory(target=target, mode=mode)
+
+        elif action == "wallpaper":
             path = params.get("path", "")
             return set_wallpaper(path) if path else "No image path provided."
 
