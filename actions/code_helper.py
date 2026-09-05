@@ -15,7 +15,7 @@ BASE_DIR           = get_base_dir()
 API_CONFIG_PATH    = BASE_DIR / "config" / "api_keys.json"
 DESKTOP            = Path.home() / "Desktop"
 MAX_BUILD_ATTEMPTS = 3
-GEMINI_MODEL       = "gemini-2.0-flash"
+GEMINI_MODEL       = "gemini-3.6-flash"
 
 
 def _get_api_key() -> str:
@@ -24,14 +24,18 @@ def _get_api_key() -> str:
 
 
 def _get_gemini(model: str = GEMINI_MODEL):
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
+    try:
+        from core.task_llm import get_task_llm
+        return get_task_llm(model=model)
+    except Exception:
+        from google import genai
+        _c = genai.Client(api_key=_get_api_key())
 
-    class _W:
-        def generate_content(self, contents):
-            return _c.models.generate_content(model=model, contents=contents)
+        class _W:
+            def generate_content(self, contents):
+                return _c.models.generate_content(model=model, contents=contents)
 
-    return _W()
+        return _W()
 
 
 def _clean_code(text: str) -> str:
@@ -494,7 +498,7 @@ Be specific and actionable. If you see an error message, quote it exactly."""
         ]
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3.6-flash",
             contents=contents,
         )
 
