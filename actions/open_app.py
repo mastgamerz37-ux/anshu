@@ -248,6 +248,11 @@ def open_app(
     if not app_name:
         return "No application name provided."
 
+    if app_name.lower().strip() in ("dashboard", "open dashboard", "control center", "mission control", "ansh dashboard", "web dashboard"):
+        import webbrowser
+        webbrowser.open("http://localhost:8000")
+        return "Opened ANSH Dashboard at http://localhost:8000 in your browser."
+
     launcher = _OS_LAUNCHERS.get(_SYSTEM)
     if launcher is None:
         return f"Unsupported operating system: {_SYSTEM}"
