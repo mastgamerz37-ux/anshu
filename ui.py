@@ -27,10 +27,13 @@ from PyQt6.QtGui import (
     QFontDatabase, QKeySequence, QLinearGradient, QPainter, QPainterPath,
     QPen, QPixmap, QRadialGradient, QShortcut,
 )
+import webbrowser
+
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSplitter,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar,
+    QTabWidget, QComboBox, QInputDialog, QDialog,
 )
 
 def _base_dir() -> Path:
@@ -60,27 +63,27 @@ _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 
 class C:
-    BG        = "#00060a"
-    PANEL     = "#010d14"
-    PANEL2    = "#010f18"
-    BORDER    = "#0d3347"
-    BORDER_B  = "#1a5c7a"
-    BORDER_A  = "#0f4060"
-    PRI       = "#00d4ff"
-    PRI_DIM   = "#007a99"
-    PRI_GHO   = "#001f2e"
-    ACC       = "#ff6b00"
-    ACC2      = "#ffcc00"
-    GREEN     = "#00ff88"
-    GREEN_D   = "#00aa55"
-    RED       = "#ff3355"
-    MUTED_C   = "#ff3366"
-    TEXT      = "#8ffcff"
-    TEXT_DIM  = "#3a8a9a"
-    TEXT_MED  = "#5ab8cc"
-    WHITE     = "#d8f8ff"
-    DARK      = "#000d14"
-    BAR_BG    = "#011520"
+    BG        = "#090d16"
+    PANEL     = "#0f172a"
+    PANEL2    = "#1e293b"
+    BORDER    = "#1e293b"
+    BORDER_B  = "#334155"
+    BORDER_A  = "#00f2fe"
+    PRI       = "#00f2fe"
+    PRI_DIM   = "#0284c7"
+    PRI_GHO   = "#0f2b46"
+    ACC       = "#f59e0b"
+    ACC2      = "#ff4b5c"
+    GREEN     = "#10b981"
+    GREEN_D   = "#047857"
+    RED       = "#ef4444"
+    MUTED_C   = "#fb7185"
+    TEXT      = "#f8fafc"
+    TEXT_DIM  = "#64748b"
+    TEXT_MED  = "#94a3b8"
+    WHITE     = "#ffffff"
+    DARK      = "#030712"
+    BAR_BG    = "#0f172a"
 
 
 # Ana renge (accent) bağlı anahtarlar — durum renkleri (ACC, GREEN, RED…) sabit kalır
@@ -547,7 +550,7 @@ class HudCanvas(QWidget):
                 p.setPen(Qt.PenStyle.NoPen)
                 p.drawEllipse(QRectF(cx - r2, cy - r2, r2 * 2, r2 * 2))
             p.setPen(QPen(qcol(C.PRI, min(255, int(self._halo * 2))), 1))
-            p.setFont(QFont("Courier New", 13, QFont.Weight.Bold))
+            p.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
             p.drawText(QRectF(cx - 80, cy - 14, 160, 28),
                        Qt.AlignmentFlag.AlignCenter, self._assistant_name)
 
@@ -578,7 +581,7 @@ class HudCanvas(QWidget):
             txt, col = f"{sym}  {self.state}", qcol(C.PRI)
 
         p.setPen(QPen(col, 1))
-        p.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
+        p.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
 
         # waveform
@@ -642,11 +645,11 @@ class MetricBar(QWidget):
             p.setBrush(QBrush(bar_col))
             p.drawRoundedRect(QRectF(bar_x, bar_y, fill_w, bar_h), 2, 2)
 
-        p.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        p.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
         p.setPen(QPen(qcol(C.TEXT_DIM), 1))
         p.drawText(QRectF(8, 5, 50, 14), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._label)
 
-        p.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        p.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         p.setPen(QPen(bar_col if self._text != "--" else qcol(C.TEXT_DIM), 1))
         p.drawText(QRectF(0, 4, W - 6, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._text)
 
@@ -656,7 +659,7 @@ class LogWidget(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setReadOnly(True)
-        self.setFont(QFont("Courier New", 9))
+        self.setFont(QFont("Segoe UI", 9))
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C.PANEL};
@@ -889,21 +892,21 @@ class _DropCanvas(QWidget):
         p.drawLine(QPointF(cx - 8, cy - 6), QPointF(cx, cy - 14))
         p.drawLine(QPointF(cx + 8, cy - 6), QPointF(cx, cy - 14))
         p.drawLine(QPointF(cx - 14, cy + 4), QPointF(cx + 14, cy + 4))
-        p.setFont(QFont("Courier New", 8))
+        p.setFont(QFont("Segoe UI", 8))
         p.setPen(QPen(qcol(C.PRI_DIM if not hover else C.TEXT), 1))
         p.drawText(QRectF(0, cy + 8, W, 16), Qt.AlignmentFlag.AlignCenter,
                    "Drop file here  or  Click to Browse")
-        p.setFont(QFont("Courier New", 7))
+        p.setFont(QFont("Segoe UI", 7))
         p.setPen(QPen(qcol("#1a4a5a"), 1))
         p.drawText(QRectF(0, cy + 24, W, 14), Qt.AlignmentFlag.AlignCenter,
                    "Images · Video · Audio · PDF · Docs · Code · Data")
 
     def _paint_drag_over(self, p, W, H):
         cx, cy = W / 2, H / 2
-        p.setFont(QFont("Courier New", 20))
+        p.setFont(QFont("Segoe UI", 20))
         p.setPen(QPen(qcol(C.PRI), 1))
         p.drawText(QRectF(0, cy - 24, W, 32), Qt.AlignmentFlag.AlignCenter, "⬇")
-        p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         p.setPen(QPen(qcol(C.PRI), 1))
         p.drawText(QRectF(0, cy + 12, W, 16), Qt.AlignmentFlag.AlignCenter, "Release to load")
 
@@ -922,26 +925,26 @@ class _DropCanvas(QWidget):
         tx = block_x + block_w + 6
         tw = W - tx - 38
 
-        p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         p.setPen(QPen(qcol(C.WHITE), 1))
         name = path.name if len(path.name) <= 34 else path.name[:31] + "..."
         p.drawText(QRectF(tx, H * 0.18, tw, 16),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, name)
 
-        p.setFont(QFont("Courier New", 7))
+        p.setFont(QFont("Segoe UI", 7))
         p.setPen(QPen(qcol(C.TEXT_DIM), 1))
         p.drawText(QRectF(tx, H * 0.18 + 18, tw, 14),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    f"{ext_str}  ·  {size_str}")
 
-        p.setFont(QFont("Courier New", 6))
+        p.setFont(QFont("Segoe UI", 6))
         p.setPen(QPen(qcol("#1e5c6a"), 1))
         par = str(path.parent)
         if len(par) > 42: par = "…" + par[-41:]
         p.drawText(QRectF(tx, H * 0.18 + 34, tw, 12),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, par)
 
-        p.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        p.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         p.setPen(QPen(qcol(C.RED, 180), 1))
         p.drawText(QRectF(W - 34, 0, 28, H), Qt.AlignmentFlag.AlignCenter, "✕")
 
@@ -976,13 +979,13 @@ class _CameraPreview(QWidget):
 
         hdr = QHBoxLayout()
         title = QLabel("◈  VISUAL INPUT")
-        title.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        title.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         hdr.addWidget(title)
         hdr.addStretch()
         close_btn = QPushButton("✕")
         close_btn.setFixedSize(16, 16)
-        close_btn.setFont(QFont("Courier New", 8))
+        close_btn.setFont(QFont("Segoe UI", 8))
         close_btn.setStyleSheet(
             f"color: {C.TEXT_DIM}; background: transparent; border: none;"
         )
@@ -1047,7 +1050,7 @@ class SetupOverlay(QWidget):
                  align=Qt.AlignmentFlag.AlignCenter):
             w = QLabel(txt)
             w.setAlignment(align)
-            w.setFont(QFont("Courier New", font_size,
+            w.setFont(QFont("Segoe UI", font_size,
                             QFont.Weight.Bold if bold else QFont.Weight.Normal))
             w.setStyleSheet(f"color: {color}; background: transparent;")
             return w
@@ -1065,7 +1068,7 @@ class SetupOverlay(QWidget):
         self._key_input = QLineEdit()
         self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self._key_input.setPlaceholderText("AIza…")
-        self._key_input.setFont(QFont("Courier New", 10))
+        self._key_input.setFont(QFont("Segoe UI", 10))
         self._key_input.setFixedHeight(32)
         self._key_input.setStyleSheet(f"""
             QLineEdit {{
@@ -1091,7 +1094,7 @@ class SetupOverlay(QWidget):
         self._os_btns: dict[str, QPushButton] = {}
         for key, label in [("windows","⊞  Windows"),("mac","  macOS"),("linux","🐧  Linux")]:
             btn = QPushButton(label)
-            btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+            btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
             btn.setFixedHeight(32)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _, k=key: self._sel(k))
@@ -1102,7 +1105,7 @@ class SetupOverlay(QWidget):
         layout.addSpacing(12)
 
         init_btn = QPushButton("▸  INITIALISE SYSTEMS")
-        init_btn.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
+        init_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         init_btn.setFixedHeight(36)
         init_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         init_btn.setStyleSheet(f"""
@@ -1263,7 +1266,7 @@ class CustomizeOverlay(QWidget):
 
         def _lbl(txt, fs=9, bold=False, color=C.PRI, align=Qt.AlignmentFlag.AlignCenter):
             w = QLabel(txt); w.setAlignment(align)
-            w.setFont(QFont("Courier New", fs,
+            w.setFont(QFont("Segoe UI", fs,
                             QFont.Weight.Bold if bold else QFont.Weight.Normal))
             w.setStyleSheet(f"color: {color}; background: transparent;")
             return w
@@ -1280,7 +1283,7 @@ class CustomizeOverlay(QWidget):
         lay.addWidget(_lbl("ASSISTANT NAME", 8, color=C.TEXT_DIM,
                             align=Qt.AlignmentFlag.AlignLeft))
         self._name_input = QLineEdit(assistant_name)
-        self._name_input.setFont(QFont("Courier New", 10))
+        self._name_input.setFont(QFont("Segoe UI", 10))
         self._name_input.setFixedHeight(32)
         self._name_input.setStyleSheet(_fs)
         lay.addWidget(self._name_input)
@@ -1290,7 +1293,7 @@ class CustomizeOverlay(QWidget):
                             color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
         self._user_input = QLineEdit(user_name)
         self._user_input.setPlaceholderText("e.g.  Tony   (leave blank for auto)")
-        self._user_input.setFont(QFont("Courier New", 10))
+        self._user_input.setFont(QFont("Segoe UI", 10))
         self._user_input.setFixedHeight(32)
         self._user_input.setStyleSheet(_fs)
         lay.addWidget(self._user_input)
@@ -1303,7 +1306,7 @@ class CustomizeOverlay(QWidget):
         clr_hdr.addStretch()
         df_btn = QPushButton("DEFAULT")
         df_btn.setFixedSize(64, 20)
-        df_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        df_btn.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
         df_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         df_btn.setStyleSheet(f"""
             QPushButton {{
@@ -1329,7 +1332,7 @@ class CustomizeOverlay(QWidget):
 
         self._hex_input = QLineEdit(self._sel_color)
         self._hex_input.setPlaceholderText("#00d4ff   (custom hex colour)")
-        self._hex_input.setFont(QFont("Courier New", 10))
+        self._hex_input.setFont(QFont("Consolas", 10))
         self._hex_input.setFixedHeight(28)
         self._hex_input.setStyleSheet(_fs)
         self._hex_input.textEdited.connect(self._on_hex_edited)
@@ -1340,7 +1343,7 @@ class CustomizeOverlay(QWidget):
 
         save_btn = QPushButton("▸  APPLY CHANGES")
         save_btn.setFixedHeight(34)
-        save_btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        save_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         save_btn.setStyleSheet(f"""
             QPushButton {{
@@ -1354,7 +1357,7 @@ class CustomizeOverlay(QWidget):
 
         cancel_btn = QPushButton("CANCEL")
         cancel_btn.setFixedHeight(34)
-        cancel_btn.setFont(QFont("Courier New", 9))
+        cancel_btn.setFont(QFont("Segoe UI", 9))
         cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn.setStyleSheet(f"""
             QPushButton {{
@@ -1412,6 +1415,172 @@ class CustomizeOverlay(QWidget):
         self.hide()
 
 
+class MemoryKnowledgeOverlay(QWidget):
+    """Floating overlay — View, add, and manage Memory & Knowledge items directly from UI."""
+    _OW, _OH = 460, 520
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            MemoryKnowledgeOverlay {{
+                background: rgba(0, 6, 10, 245);
+                border: 1px solid {C.BORDER_B};
+                border-radius: 6px;
+            }}
+        """)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 16, 20, 16)
+        lay.setSpacing(10)
+
+        title = QLabel("🧠  MEMORY & KNOWLEDGE MANAGER")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        lay.addWidget(title)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
+        lay.addWidget(sep)
+
+        tabs = QTabWidget()
+        tabs.setStyleSheet(f"""
+            QTabWidget::pane {{ border: 1px solid {C.BORDER}; background: #000d12; border-radius: 4px; }}
+            QTabBar::tab {{ background: #00151f; color: {C.TEXT_DIM}; padding: 6px 12px; font-size: 11px; }}
+            QTabBar::tab:selected {{ background: #002b3d; color: {C.PRI}; font-weight: bold; }}
+        """)
+
+        # Tab 1: Memory
+        mem_page = QWidget()
+        mlay = QVBoxLayout(mem_page)
+        mlay.setContentsMargins(10, 10, 10, 10)
+        mlay.setSpacing(5)
+
+        cat_lbl = QLabel("Category:")
+        cat_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: 10px;")
+        mlay.addWidget(cat_lbl)
+        self.cat_combo = QComboBox()
+        self.cat_combo.addItems(["Identity", "Preferences", "Projects", "Relationships", "Wishes", "Notes"])
+        self.cat_combo.setStyleSheet(f"background: #001822; color: {C.TEXT}; border: 1px solid {C.BORDER}; padding: 4px;")
+        mlay.addWidget(self.cat_combo)
+
+        top_lbl = QLabel("Topic / Key:")
+        top_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: 10px;")
+        mlay.addWidget(top_lbl)
+        self.topic_input = QLineEdit()
+        self.topic_input.setPlaceholderText("e.g. Favorite Language")
+        self.topic_input.setStyleSheet(f"background: #001822; color: {C.TEXT}; border: 1px solid {C.BORDER}; padding: 4px;")
+        mlay.addWidget(self.topic_input)
+
+        val_lbl = QLabel("Value / Memory Content:")
+        val_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: 10px;")
+        mlay.addWidget(val_lbl)
+        self.val_input = QTextEdit()
+        self.val_input.setFixedHeight(55)
+        self.val_input.setPlaceholderText("e.g. Python & TypeScript")
+        self.val_input.setStyleSheet(f"background: #001822; color: {C.TEXT}; border: 1px solid {C.BORDER}; padding: 4px;")
+        mlay.addWidget(self.val_input)
+
+        save_mem_btn = QPushButton("💾  SAVE MEMORY")
+        save_mem_btn.setFixedHeight(28)
+        save_mem_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_mem_btn.setStyleSheet(f"background: #001520; color: {C.PRI}; border: 1px solid {C.PRI_DIM}; border-radius: 3px; font-weight: bold;")
+        save_mem_btn.clicked.connect(self._save_memory_item)
+        mlay.addWidget(save_mem_btn)
+
+        self.mem_display = QTextEdit()
+        self.mem_display.setReadOnly(True)
+        self.mem_display.setStyleSheet(f"background: #00090d; color: {C.TEXT_MED}; border: 1px solid {C.BORDER}; font-size: 10px;")
+        mlay.addWidget(self.mem_display)
+
+        tabs.addTab(mem_page, "🧠 Memory")
+
+        # Tab 2: Knowledge
+        knw_page = QWidget()
+        klay = QVBoxLayout(knw_page)
+        klay.setContentsMargins(10, 10, 10, 10)
+        klay.setSpacing(5)
+
+        k_lbl = QLabel("Knowledge Title / Topic:")
+        k_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: 10px;")
+        klay.addWidget(k_lbl)
+        self.knw_topic = QLineEdit()
+        self.knw_topic.setPlaceholderText("e.g. System Architecture Notes")
+        self.knw_topic.setStyleSheet(f"background: #001822; color: {C.TEXT}; border: 1px solid {C.BORDER}; padding: 4px;")
+        klay.addWidget(self.knw_topic)
+
+        k_val_lbl = QLabel("Knowledge Body / Information:")
+        k_val_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: 10px;")
+        klay.addWidget(k_val_lbl)
+        self.knw_content = QTextEdit()
+        self.knw_content.setFixedHeight(110)
+        self.knw_content.setPlaceholderText("Enter detailed knowledge note...")
+        self.knw_content.setStyleSheet(f"background: #001822; color: {C.TEXT}; border: 1px solid {C.BORDER}; padding: 4px;")
+        klay.addWidget(self.knw_content)
+
+        save_knw_btn = QPushButton("📚  SAVE KNOWLEDGE NOTE")
+        save_knw_btn.setFixedHeight(28)
+        save_knw_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_knw_btn.setStyleSheet(f"background: #001520; color: {C.PRI}; border: 1px solid {C.PRI_DIM}; border-radius: 3px; font-weight: bold;")
+        save_knw_btn.clicked.connect(self._save_knowledge_item)
+        klay.addWidget(save_knw_btn)
+
+        tabs.addTab(knw_page, "📚 Knowledge")
+
+        lay.addWidget(tabs)
+
+        close_btn = QPushButton("CLOSE")
+        close_btn.setFixedHeight(28)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(f"background: transparent; color: {C.TEXT_MED}; border: 1px solid {C.BORDER}; border-radius: 3px;")
+        close_btn.clicked.connect(self.hide)
+        lay.addWidget(close_btn)
+
+        self._refresh_memories()
+
+    def _refresh_memories(self):
+        try:
+            from memory.memory_manager import load_memory
+            mem = load_memory()
+            lines = []
+            for cat, items in mem.items():
+                if isinstance(items, dict) and items:
+                    lines.append(f"[{cat.upper()}]")
+                    for k, v in items.items():
+                        val = v.get("value", v) if isinstance(v, dict) else v
+                        lines.append(f"  • {k}: {val}")
+            self.mem_display.setPlainText("\n".join(lines) if lines else "No memories stored yet.")
+        except Exception as e:
+            self.mem_display.setPlainText(f"Error loading memories: {e}")
+
+    def _save_memory_item(self):
+        cat = self.cat_combo.currentText().lower()
+        topic = self.topic_input.text().strip()
+        val = self.val_input.toPlainText().strip()
+        if topic and val:
+            try:
+                from memory.memory_manager import save_memory
+                save_memory({cat: {topic: {"value": val, "importance": "High"}}})
+                self.topic_input.clear()
+                self.val_input.clear()
+                self._refresh_memories()
+            except Exception as e:
+                print("Memory save error:", e)
+
+    def _save_knowledge_item(self):
+        topic = self.knw_topic.text().strip()
+        val = self.knw_content.toPlainText().strip()
+        if topic and val:
+            try:
+                from memory.memory_manager import save_memory
+                save_memory({"notes": {topic: {"value": val, "importance": "High"}}})
+                self.knw_topic.clear()
+                self.knw_content.clear()
+                self._refresh_memories()
+            except Exception as e:
+                print("Knowledge save error:", e)
+
+
 class ClipboardPanel(QWidget):
     """Floating panel shown when text is copied — offers quick Ansh actions."""
 
@@ -1437,12 +1606,12 @@ class ClipboardPanel(QWidget):
 
         hdr = QHBoxLayout(); hdr.setSpacing(4)
         icon_lbl = QLabel("◈  CLIPBOARD DETECTED")
-        icon_lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        icon_lbl.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
         icon_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent;")
         hdr.addWidget(icon_lbl); hdr.addStretch()
         x_btn = QPushButton("✕")
         x_btn.setFixedSize(16, 16)
-        x_btn.setFont(QFont("Courier New", 8))
+        x_btn.setFont(QFont("Segoe UI", 8))
         x_btn.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none;")
         x_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         x_btn.clicked.connect(self.hide)
@@ -1450,7 +1619,7 @@ class ClipboardPanel(QWidget):
         lay.addLayout(hdr)
 
         self._preview = QLabel()
-        self._preview.setFont(QFont("Courier New", 8))
+        self._preview.setFont(QFont("Segoe UI", 8))
         self._preview.setStyleSheet(f"""
             color: {C.TEXT}; background: {C.PANEL2};
             border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 6px;
@@ -1471,7 +1640,7 @@ class ClipboardPanel(QWidget):
         ]:
             b = QPushButton(label)
             b.setFixedHeight(22)
-            b.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            b.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setStyleSheet(_bs)
             b.clicked.connect(lambda _, c=cmd_fmt: self._trigger(c))
@@ -1529,7 +1698,7 @@ class RemoteKeyOverlay(QWidget):
                  align=Qt.AlignmentFlag.AlignCenter):
             w = QLabel(txt)
             w.setAlignment(align)
-            w.setFont(QFont("Courier New", fs,
+            w.setFont(QFont("Segoe UI", fs,
                             QFont.Weight.Bold if bold else QFont.Weight.Normal))
             w.setStyleSheet(f"color: {color}; background: transparent;")
             w.setWordWrap(True)
@@ -1565,7 +1734,7 @@ class RemoteKeyOverlay(QWidget):
                            align=Qt.AlignmentFlag.AlignLeft))
 
         self._url_lbl = QLabel(self._manual_url)
-        self._url_lbl.setFont(QFont("Courier New", 8))
+        self._url_lbl.setFont(QFont("Segoe UI", 8))
         self._url_lbl.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
         self._url_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._url_lbl.setTextInteractionFlags(
@@ -1573,7 +1742,7 @@ class RemoteKeyOverlay(QWidget):
         lay.addWidget(self._url_lbl)
 
         self._key_lbl = QLabel(key)
-        self._key_lbl.setFont(QFont("Courier New", 28, QFont.Weight.Bold))
+        self._key_lbl.setFont(QFont("Segoe UI", 28, QFont.Weight.Bold))
         self._key_lbl.setStyleSheet(f"""
             color: {C.ACC};
             background: {C.PANEL2};
@@ -1586,7 +1755,7 @@ class RemoteKeyOverlay(QWidget):
         lay.addWidget(self._key_lbl)
 
         self._timer_lbl = QLabel()
-        self._timer_lbl.setFont(QFont("Courier New", 8))
+        self._timer_lbl.setFont(QFont("Segoe UI", 8))
         self._timer_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
         self._timer_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(self._timer_lbl)
@@ -1594,7 +1763,7 @@ class RemoteKeyOverlay(QWidget):
         btn_row = QHBoxLayout(); btn_row.setSpacing(8)
         new_btn = QPushButton("NEW KEY")
         new_btn.setFixedHeight(32)
-        new_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        new_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         new_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         new_btn.setStyleSheet(f"""
             QPushButton {{
@@ -1608,7 +1777,7 @@ class RemoteKeyOverlay(QWidget):
 
         close_btn = QPushButton("DISMISS")
         close_btn.setFixedHeight(32)
-        close_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        close_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(f"""
             QPushButton {{
@@ -1654,13 +1823,13 @@ class RemoteKeyOverlay(QWidget):
             )
         except ImportError:
             self._qr_label.setText("pip install\nqrcode[pil]")
-            self._qr_label.setFont(QFont("Courier New", 8))
+            self._qr_label.setFont(QFont("Segoe UI", 8))
             self._qr_label.setStyleSheet(
                 "color: #888; background: white; border-radius: 10px; padding: 4px;"
             )
         except Exception:
             self._qr_label.setText(url[:28])
-            self._qr_label.setFont(QFont("Courier New", 7))
+            self._qr_label.setFont(QFont("Segoe UI", 7))
             self._qr_label.setStyleSheet(
                 f"color: {C.PRI}; background: white; border-radius: 10px; padding: 4px;"
             )
@@ -1685,7 +1854,7 @@ class RemoteKeyOverlay(QWidget):
             letter-spacing: 4px;
         """)
         self._qr_label.setText("✓")
-        self._qr_label.setFont(QFont("Courier New", 54, QFont.Weight.Bold))
+        self._qr_label.setFont(QFont("Segoe UI", 54, QFont.Weight.Bold))
         self._qr_label.setStyleSheet(
             "color: #00ff88; background: #001a0d; border-radius: 10px;"
         )
@@ -1727,6 +1896,7 @@ class RemoteKeyOverlay(QWidget):
 
 
 class MainWindow(QMainWindow):
+    subtitle_signal = pyqtSignal(str)
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
@@ -1767,6 +1937,7 @@ class MainWindow(QMainWindow):
         self._current_file: str | None = None
         self._remote_overlay: RemoteKeyOverlay | None = None
         self._customize_overlay: CustomizeOverlay | None = None
+        self._memory_overlay: MemoryKnowledgeOverlay | None = None
 
         central = QWidget()
         central.setStyleSheet(f"background: {C.BG};")
@@ -1798,12 +1969,12 @@ class MainWindow(QMainWindow):
         _cam_hdr = QHBoxLayout()
         _cam_hdr.setContentsMargins(8, 5, 8, 5)
         _cam_title = QLabel("◈  CAMERA FEED")
-        _cam_title.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        _cam_title.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         _cam_title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         _cam_hdr.addWidget(_cam_title)
         _cam_hdr.addStretch()
         _cam_x = QPushButton("✕  CLOSE")
-        _cam_x.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        _cam_x.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         _cam_x.setCursor(Qt.CursorShape.PointingHandCursor)
         _cam_x.setStyleSheet(f"""
             QPushButton {{
@@ -1870,6 +2041,7 @@ class MainWindow(QMainWindow):
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
+        self.subtitle_signal.connect(self._on_subtitle)
         self._content_sig.connect(self._show_content)
         self._reconfig_sig.connect(self._show_setup)
         self._camera_sig.connect(self._show_camera_frame)
@@ -1897,6 +2069,78 @@ class MainWindow(QMainWindow):
         sc_full.activated.connect(self._toggle_fullscreen)
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
+
+        # IRIS Signature Shortcuts
+        sc_peel = QShortcut(QKeySequence("Ctrl+Alt+X"), self)
+        sc_peel.activated.connect(self._trigger_screen_peeler)
+        sc_ghost = QShortcut(QKeySequence("Ctrl+Alt+Space"), self)
+        sc_ghost.activated.connect(self._trigger_phantom_typer)
+        sc_mini = QShortcut(QKeySequence("Ctrl+Shift+I"), self)
+        sc_mini.activated.connect(self._focus_input_or_mini)
+        sc_island = QShortcut(QKeySequence("Ctrl+K"), self)
+        sc_island.activated.connect(self._toggle_smart_island)
+        sc_island2 = QShortcut(QKeySequence("Ctrl+Shift+Space"), self)
+        sc_island2.activated.connect(self._toggle_smart_island)
+
+        # Smart Dynamic Island Desktop Companion
+        try:
+            from smart_island import SmartIslandWindow
+            self._island = SmartIslandWindow(
+                on_command=self._on_island_command,
+                on_open_dashboard=self._on_island_open_dashboard
+            )
+            self._island.show()
+        except Exception as e:
+            self._island = None
+            print(f"[UI] Smart Island init note: {e}")
+
+    def _toggle_smart_island(self):
+        if hasattr(self, "_island") and self._island:
+            if self._island.current_state == "STANDBY":
+                self._island.set_state("SPOTLIGHT")
+            else:
+                self._island.set_state("STANDBY")
+
+    def _on_island_command(self, cmd: str):
+        self._log.append_log(f"You (Smart Island): {cmd}")
+        if self.on_text_command:
+            threading.Thread(target=self.on_text_command, args=(cmd,), daemon=True).start()
+
+    def _on_island_open_dashboard(self):
+        self._log.append_log("SYS: 📊 Opening Web Dashboard at http://localhost:8000...")
+        import webbrowser
+        webbrowser.open("http://localhost:8000")
+        if self.on_remote_clicked:
+            try:
+                self.on_remote_clicked()
+            except Exception:
+                pass
+
+    def _trigger_screen_peeler(self):
+        self._log.append_log("SYS: ✂️ ScreenPeeler Snip & OCR triggered (Ctrl+Alt+X)...")
+        from actions.screen_peeler import screen_peeler_action
+        threading.Thread(
+            target=lambda: screen_peeler_action({"action": "extract_full"}, player=self),
+            daemon=True
+        ).start()
+
+    def _trigger_phantom_typer(self):
+        self._log.append_log("SYS: ⌨️ Phantom Typer / Inline Command focused (Ctrl+Alt+Space)...")
+        if hasattr(self, "_island") and self._island:
+            self._island.set_state("SPOTLIGHT")
+        else:
+            self._input.setFocus()
+            self.activateWindow()
+            self.raise_()
+
+    def _focus_input_or_mini(self):
+        self._log.append_log("SYS: ⚡ Quick Overlay summoned (Ctrl+Shift+I)...")
+        if hasattr(self, "_island") and self._island:
+            self._island.set_state("SPOTLIGHT")
+        else:
+            self._input.setFocus()
+            self.activateWindow()
+            self.raise_()
 
     def _show_camera_frame(self, img_bytes: bytes):
         """Slot — display camera preview overlay (main thread)."""
@@ -2451,7 +2695,7 @@ class MainWindow(QMainWindow):
 
         def _badge(txt, color=C.TEXT_MED):
             l = QLabel(txt)
-            l.setFont(QFont("Courier New", 8))
+            l.setFont(QFont("Segoe UI", 8))
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
@@ -2459,7 +2703,7 @@ class MainWindow(QMainWindow):
         lay.addSpacing(8)
         self._drawer_btn = QPushButton("⚙")
         self._drawer_btn.setFixedSize(26, 26)
-        self._drawer_btn.setFont(QFont("Courier New", 11))
+        self._drawer_btn.setFont(QFont("Segoe UI", 11))
         self._drawer_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._drawer_btn.setToolTip("Settings & Controls")
         self._drawer_btn.setStyleSheet(f"""
@@ -2473,13 +2717,32 @@ class MainWindow(QMainWindow):
         self._drawer_btn.setCheckable(True)
         self._drawer_btn.clicked.connect(self._toggle_drawer)
         lay.addWidget(self._drawer_btn)
+
+        lay.addSpacing(6)
+        self._island_btn = QPushButton("🏝 ISLAND")
+        self._island_btn.setFixedHeight(26)
+        self._island_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        self._island_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._island_btn.setToolTip("Toggle Floating Dynamic Island (Ctrl+K)")
+        self._island_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: #0f172a; color: {C.PRI};
+                border: 1px solid {C.BORDER_A}; border-radius: 6px;
+                padding: 0 8px;
+            }}
+            QPushButton:hover {{
+                background: {C.PRI_GHO}; color: {C.WHITE}; border-color: {C.PRI};
+            }}
+        """)
+        self._island_btn.clicked.connect(self._toggle_smart_island)
+        lay.addWidget(self._island_btn)
         lay.addStretch()
 
         mid = QVBoxLayout(); mid.setSpacing(1)
         _disp = self._assistant_name.upper()
         self._title_lbl = QLabel(_disp)
         self._title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._title_lbl.setFont(QFont("Courier New", 17, QFont.Weight.Bold))
+        self._title_lbl.setFont(QFont("Segoe UI", 17, QFont.Weight.Bold))
         self._title_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         mid.addWidget(self._title_lbl)
         _sub_text = ("Just A Rather Very Intelligent System"
@@ -2487,7 +2750,7 @@ class MainWindow(QMainWindow):
                      else "Personal AI Assistant")
         self._sub_lbl = QLabel(_sub_text)
         self._sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._sub_lbl.setFont(QFont("Courier New", 7))
+        self._sub_lbl.setFont(QFont("Segoe UI", 7))
         self._sub_lbl.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
         mid.addWidget(self._sub_lbl)
         lay.addLayout(mid)
@@ -2495,12 +2758,12 @@ class MainWindow(QMainWindow):
 
         right_col = QVBoxLayout(); right_col.setSpacing(2)
         self._clock_lbl = QLabel("00:00:00")
-        self._clock_lbl.setFont(QFont("Courier New", 14, QFont.Weight.Bold))
+        self._clock_lbl.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
         self._clock_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         self._clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
         right_col.addWidget(self._clock_lbl)
         self._date_lbl = QLabel("")
-        self._date_lbl.setFont(QFont("Courier New", 7))
+        self._date_lbl.setFont(QFont("Segoe UI", 7))
         self._date_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
         self._date_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
         right_col.addWidget(self._date_lbl)
@@ -2520,7 +2783,7 @@ class MainWindow(QMainWindow):
         lay.setSpacing(6)
 
         hdr = QLabel("◈ SYS MONITOR")
-        hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        hdr.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
         hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; "
                           f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
         lay.addWidget(hdr)
@@ -2547,18 +2810,18 @@ class MainWindow(QMainWindow):
         ip_lay.setSpacing(3)
 
         self._uptime_lbl = QLabel("UP  --:--")
-        self._uptime_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._uptime_lbl.setFont(QFont("Consolas", 8, QFont.Weight.Bold))
         self._uptime_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent; border: none;")
         ip_lay.addWidget(self._uptime_lbl)
 
         self._proc_lbl = QLabel("PROC  --")
-        self._proc_lbl.setFont(QFont("Courier New", 8))
+        self._proc_lbl.setFont(QFont("Consolas", 8))
         self._proc_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; border: none;")
         ip_lay.addWidget(self._proc_lbl)
 
         os_name = {"Windows": "WIN", "Darwin": "macOS", "Linux": "LINUX"}.get(_OS, _OS.upper())
         os_lbl = QLabel(f"OS  {os_name}")
-        os_lbl.setFont(QFont("Courier New", 8))
+        os_lbl.setFont(QFont("Segoe UI", 8))
         os_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent; border: none;")
         ip_lay.addWidget(os_lbl)
 
@@ -2573,7 +2836,7 @@ class MainWindow(QMainWindow):
             ("PROTOCOL\nXLIX",   C.TEXT_DIM),
         ]:
             lbl = QLabel(txt)
-            lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            lbl.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(
                 f"color: {col}; background: {C.PANEL2};"
@@ -2592,7 +2855,7 @@ class MainWindow(QMainWindow):
 
         def _sec(txt):
             l = QLabel(f"▸ {txt}")
-            l.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            l.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
             l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
             return l
 
@@ -2610,7 +2873,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(self._drop_zone)
 
         self._file_hint = QLabel("No file loaded — drop or click above to upload")
-        self._file_hint.setFont(QFont("Courier New", 7))
+        self._file_hint.setFont(QFont("Segoe UI", 7))
         self._file_hint.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
         self._file_hint.setWordWrap(True)
         lay.addWidget(self._file_hint)
@@ -2624,7 +2887,7 @@ class MainWindow(QMainWindow):
 
         self._interrupt_btn = QPushButton("✋  INTERRUPT  [ESC]")
         self._interrupt_btn.setFixedHeight(34)
-        self._interrupt_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._interrupt_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         self._interrupt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._interrupt_btn.setStyleSheet(f"""
             QPushButton {{
@@ -2643,7 +2906,7 @@ class MainWindow(QMainWindow):
 
         self._mute_btn = QPushButton("🎙  MICROPHONE ACTIVE")
         self._mute_btn.setFixedHeight(30)
-        self._mute_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._mute_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._mute_btn.clicked.connect(self._toggle_mute)
         self._style_mute_btn()
@@ -2687,14 +2950,14 @@ class MainWindow(QMainWindow):
         lay.setSpacing(5)
 
         hdr = QLabel("◈ CONTROLS")
-        hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        hdr.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
         hdr.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent; "
                           f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
         lay.addWidget(hdr)
 
         remote_btn = QPushButton("◉  REMOTE CONTROL")
         remote_btn.setFixedHeight(30)
-        remote_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        remote_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         remote_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         remote_btn.setStyleSheet(_BTN_STYLE_PRI)
         remote_btn.clicked.connect(self._open_remote)
@@ -2702,7 +2965,7 @@ class MainWindow(QMainWindow):
 
         fs_btn = QPushButton("⛶  FULLSCREEN  [F11]")
         fs_btn.setFixedHeight(26)
-        fs_btn.setFont(QFont("Courier New", 7))
+        fs_btn.setFont(QFont("Segoe UI", 7))
         fs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         fs_btn.setStyleSheet(_BTN_STYLE_DIM)
         fs_btn.clicked.connect(self._toggle_fullscreen)
@@ -2710,7 +2973,7 @@ class MainWindow(QMainWindow):
 
         sc_btn = QPushButton("⊞  CREATE DESKTOP SHORTCUT")
         sc_btn.setFixedHeight(26)
-        sc_btn.setFont(QFont("Courier New", 7))
+        sc_btn.setFont(QFont("Segoe UI", 7))
         sc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         sc_btn.setStyleSheet(_BTN_STYLE_DIM)
         sc_btn.clicked.connect(self._create_desktop_shortcut)
@@ -2718,22 +2981,30 @@ class MainWindow(QMainWindow):
 
         self._autostart_btn = QPushButton("◉  AUTO-START: OFF")
         self._autostart_btn.setFixedHeight(26)
-        self._autostart_btn.setFont(QFont("Courier New", 7))
+        self._autostart_btn.setFont(QFont("Segoe UI", 7))
         self._autostart_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._autostart_btn.clicked.connect(self._toggle_autostart)
         lay.addWidget(self._autostart_btn)
 
         cust_btn = QPushButton("⚙  CUSTOMISE ASSISTANT")
         cust_btn.setFixedHeight(26)
-        cust_btn.setFont(QFont("Courier New", 7))
+        cust_btn.setFont(QFont("Segoe UI", 7))
         cust_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cust_btn.setStyleSheet(_BTN_STYLE_DIM)
         cust_btn.clicked.connect(self._open_customize)
         lay.addWidget(cust_btn)
 
+        mem_btn = QPushButton("🧠  MEMORY & KNOWLEDGE")
+        mem_btn.setFixedHeight(26)
+        mem_btn.setFont(QFont("Segoe UI", 7))
+        mem_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        mem_btn.setStyleSheet(_BTN_STYLE_DIM)
+        mem_btn.clicked.connect(self._open_memory_knowledge)
+        lay.addWidget(mem_btn)
+
         self._brief_btn = QPushButton()
         self._brief_btn.setFixedHeight(26)
-        self._brief_btn.setFont(QFont("Courier New", 7))
+        self._brief_btn.setFont(QFont("Segoe UI", 7))
         self._brief_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._brief_btn.clicked.connect(self._toggle_brief)
         lay.addWidget(self._brief_btn)
@@ -2761,7 +3032,7 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout(); row.setSpacing(5)
         self._input = QLineEdit()
         self._input.setPlaceholderText("Type a command or question…")
-        self._input.setFont(QFont("Courier New", 9))
+        self._input.setFont(QFont("Segoe UI", 9))
         self._input.setFixedHeight(30)
         self._input.setStyleSheet(f"""
             QLineEdit {{
@@ -2775,7 +3046,7 @@ class MainWindow(QMainWindow):
 
         send = QPushButton("▸")
         send.setFixedSize(30, 30)
-        send.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
+        send.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         send.setCursor(Qt.CursorShape.PointingHandCursor)
         send.setStyleSheet(f"""
             QPushButton {{
@@ -2811,12 +3082,12 @@ class MainWindow(QMainWindow):
         hdr = QHBoxLayout(); hdr.setSpacing(6)
 
         dot = QLabel("◈")
-        dot.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        dot.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         dot.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         hdr.addWidget(dot)
 
         self._content_title_lbl = QLabel("BRIEFING")
-        self._content_title_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._content_title_lbl.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         self._content_title_lbl.setStyleSheet(
             f"color: {C.PRI}; background: transparent; letter-spacing: 1px;"
         )
@@ -2824,12 +3095,12 @@ class MainWindow(QMainWindow):
         hdr.addStretch()
 
         self._content_ts_lbl = QLabel("")
-        self._content_ts_lbl.setFont(QFont("Courier New", 7))
+        self._content_ts_lbl.setFont(QFont("Segoe UI", 7))
         self._content_ts_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
         hdr.addWidget(self._content_ts_lbl)
 
         dismiss = QPushButton("DISMISS  ✕")
-        dismiss.setFont(QFont("Courier New", 7))
+        dismiss.setFont(QFont("Segoe UI", 7))
         dismiss.setFixedHeight(18)
         dismiss.setCursor(Qt.CursorShape.PointingHandCursor)
         dismiss.setStyleSheet(f"""
@@ -2850,7 +3121,7 @@ class MainWindow(QMainWindow):
         # ── text display ──────────────────────────────────────────────────────
         self._content_display = QTextEdit()
         self._content_display.setReadOnly(True)
-        self._content_display.setFont(QFont("Courier New", 8))
+        self._content_display.setFont(QFont("Segoe UI", 8))
         self._content_display.setMinimumHeight(60)
         self._content_display.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
@@ -2900,13 +3171,13 @@ class MainWindow(QMainWindow):
         lay = QHBoxLayout(w); lay.setContentsMargins(14, 0, 14, 0)
 
         def _fl(txt, color=C.TEXT_MED):
-            l = QLabel(txt); l.setFont(QFont("Courier New", 7))
+            l = QLabel(txt); l.setFont(QFont("Segoe UI", 7))
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
         lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
         lay.addStretch()
-        lay.addWidget(_fl("By FatihMakes", C.PRI_DIM))
+        lay.addWidget(_fl("By Anshu Dubey", C.PRI_DIM))
         return w
 
     def _on_file_selected(self, path: str):
@@ -3117,6 +3388,21 @@ class MainWindow(QMainWindow):
         ov.show()
         self._customize_overlay = ov
 
+    def _open_memory_knowledge(self):
+        if hasattr(self, '_memory_overlay') and self._memory_overlay:
+            self._memory_overlay.hide()
+        cw = self.centralWidget()
+        ov = MemoryKnowledgeOverlay(parent=cw)
+        ow, oh = MemoryKnowledgeOverlay._OW, MemoryKnowledgeOverlay._OH
+        oh = min(oh, cw.height() - 16)
+        ov.setGeometry(
+            (cw.width()  - ow) // 2,
+            (cw.height() - oh) // 2,
+            ow, oh,
+        )
+        ov.show()
+        self._memory_overlay = ov
+
     def _preview_ui_color(self, hex_color: str):
         """Canlı önizleme — tüm arayüzü yeni renge boyar (config'e YAZMAZ)."""
         old = current_palette()
@@ -3231,12 +3517,32 @@ class MainWindow(QMainWindow):
     def _apply_state(self, state: str):
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
+        if hasattr(self, "_island") and self._island:
+            if state == "SPEAKING":
+                self._island.set_speaking_state(True)
+                self._island.set_hearing_state(False)
+            elif state in ("LISTENING", "HEARING", "RECORDING", "USER_SPEAKING"):
+                self._island.set_hearing_state(True)
+                self._island.set_speaking_state(False)
+            else:
+                self._island.set_speaking_state(False)
+                self._island.set_hearing_state(False)
+
+    def _on_subtitle(self, text: str):
+        if hasattr(self, "_island") and self._island and text.strip():
+            self._island.update_briefing(text)
 
     def _check_config(self) -> bool:
         if not API_FILE.exists(): return False
         try:
             d = json.loads(API_FILE.read_text(encoding="utf-8"))
-            return bool(d.get("gemini_api_key")) and bool(d.get("os_system"))
+            key = d.get("gemini_api_key") or d.get("api_key")
+            if not key:
+                return False
+            if not d.get("os_system"):
+                d["os_system"] = platform.system()
+                API_FILE.write_text(json.dumps(d, indent=4), encoding="utf-8")
+            return True
         except Exception:
             return False
 
@@ -3281,7 +3587,7 @@ class AnshUI:
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
         self._win = MainWindow(face_path)
-        self._win.show()
+        # MainWindow remains hidden in background by default
         self.root = _RootShim(self._app)
 
     @property
@@ -3332,7 +3638,9 @@ class AnshUI:
 
     def wait_for_api_key(self):
         while not self._win._ready:
-            time.sleep(0.1)
+            if threading.current_thread() is threading.main_thread():
+                QApplication.processEvents()
+            time.sleep(0.05)
 
     def show_content(self, title: str, text: str):
         """Thread-safe: display content in the panel below the HUD."""
@@ -3342,6 +3650,67 @@ class AnshUI:
         """Thread-safe: show the API key setup overlay (e.g. after an auth error)."""
         self._win._ready = False
         self._win._reconfig_sig.emit()
+
+    def prompt_activation(self, license_mgr):
+        """Prompt user for Product Activation Key with redirect link to https://getyoursoft.page.gd."""
+        dlg = QDialog(self._win)
+        dlg.setWindowTitle("ANSH - Product Activation Required")
+        dlg.setFixedSize(480, 260)
+        dlg.setStyleSheet("""
+            QDialog { background-color: #12141c; color: #ffffff; font-family: 'Segoe UI', sans-serif; }
+            QLabel { color: #e2e8f0; font-size: 13px; }
+            QLineEdit { background-color: #1a1d2e; border: 1px solid #3b82f6; border-radius: 6px; color: #ffffff; padding: 8px; font-size: 14px; }
+            QPushButton#btn_buy { background-color: #3b82f6; color: #ffffff; border-radius: 6px; padding: 8px 16px; font-weight: bold; }
+            QPushButton#btn_buy:hover { background-color: #2563eb; }
+            QPushButton#btn_act { background-color: #10b981; color: #ffffff; border-radius: 6px; padding: 8px 16px; font-weight: bold; }
+            QPushButton#btn_act:hover { background-color: #059669; }
+        """)
+
+        layout = QVBoxLayout(dlg)
+        title_lbl = QLabel("⚠️ Your 3-Day Free Trial Has Expired!")
+        title_lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #f59e0b;")
+        layout.addWidget(title_lbl)
+
+        info_lbl = QLabel("To continue using ANSH - Your Own AI Friend, please enter a valid Product Activation Key. If you do not have a key, click below to get one:")
+        info_lbl.setWordWrap(True)
+        layout.addWidget(info_lbl)
+
+        buy_btn = QPushButton("🌐 Get Product Key (https://getyoursoft.page.gd)")
+        buy_btn.setObjectName("btn_buy")
+        buy_btn.clicked.connect(lambda: webbrowser.open("https://getyoursoft.page.gd"))
+        layout.addWidget(buy_btn)
+
+        key_input = QLineEdit()
+        key_input.setPlaceholderText("Enter Key: ANSH-XXXX-XXXX-XXXX")
+        layout.addWidget(key_input)
+
+        status_lbl = QLabel("")
+        status_lbl.setStyleSheet("color: #ef4444; font-weight: bold;")
+        layout.addWidget(status_lbl)
+
+        btn_box = QHBoxLayout()
+        act_btn = QPushButton("🔑 Activate Key")
+        act_btn.setObjectName("btn_act")
+        btn_box.addWidget(act_btn)
+        layout.addLayout(btn_box)
+
+        activated_success = False
+
+        def do_activate():
+            nonlocal activated_success
+            k_text = key_input.text().strip()
+            success, msg = license_mgr.activate_product_key(k_text)
+            if success:
+                activated_success = True
+                self.write_log(f"SYS: {msg}")
+                dlg.accept()
+            else:
+                status_lbl.setText(msg)
+
+        act_btn.clicked.connect(do_activate)
+        dlg.exec()
+
+        return activated_success
 
     def show_camera_frame(self, img_bytes: bytes):
         """Thread-safe: show a webcam frame in the small overlay (screen captures)."""
