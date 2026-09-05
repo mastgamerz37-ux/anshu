@@ -91,20 +91,23 @@ def volume_set(value: int):
     value = max(0, min(100, int(value)))
     if _OS == "Windows":
         try:
-            import math
+            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
             from ctypes import cast, POINTER
             from comtypes import CLSCTX_ALL
-            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-            devices   = AudioUtilities.GetSpeakers()
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            vol       = cast(interface, POINTER(IAudioEndpointVolume))
-            vol_db    = -65.25 if value == 0 else max(-65.25, 20 * math.log10(value / 100))
-            vol.SetMasterVolumeLevel(vol_db, None)
-            return
-        except Exception as e:
-            print(f"[Settings] pycaw failed, using keypress fallback: {e}")
-            pyautogui.press("volumemute")
-            pyautogui.press("volumemute")
+            device = AudioUtilities.GetSpeakers()
+            if hasattr(device, "EndpointVolume") and device.EndpointVolume:
+                device.EndpointVolume.SetMasterVolumeLevelScalar(value / 100.0, None)
+                return
+            elif hasattr(device, "Activate"):
+                interface = device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+                vol = cast(interface, POINTER(IAudioEndpointVolume))
+                vol.SetMasterVolumeLevelScalar(value / 100.0, None)
+                return
+        except Exception:
+            pass
+        # Fallback to keypresses
+        pyautogui.press("volumemute")
+        pyautogui.press("volumemute")
     elif _OS == "Darwin":
         subprocess.run(["osascript", "-e", f"set volume output volume {value}"],
             capture_output=True)
@@ -613,8 +616,9 @@ Rules:
 - Return ONLY the JSON, no explanation, no markdown."""
 
     try:
-        resp = _client.models.generate_content(model="gemini-2.0-flash-lite-preview-02-05", contents=prompt)
-        text = re.sub(r"```(?:json)?", "", resp.text).strip().rstrip("`").strip()
+        from core.task_llm import call_task_llm
+        raw = call_task_llm(prompt=prompt, json_mode=True)
+        text = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
         return json.loads(text)
     except Exception as e:
         print(f"[Settings] Intent detection failed: {e}")
