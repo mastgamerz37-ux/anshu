@@ -25,13 +25,23 @@ def _normalize_url(url: str) -> str:
     """
     Bare words like "instagram" → "https://instagram.com"
     Domains like "instagram.com" → "https://instagram.com"
+    Local file paths → "file:///C:/..."
     Full URLs pass through unchanged.
     """
-    url = url.strip()
+    url = url.strip().strip('"').strip("'")
     if not url:
         return "about:blank"
-    if "://" in url:
+    if url.startswith("file://") or "://" in url:
         return url
+
+    # Check for local Windows or Unix file paths
+    clean_p = url.replace("\\", "/")
+    if (len(clean_p) > 1 and clean_p[1] == ":") or clean_p.startswith("/") or clean_p.endswith((".py", ".html", ".txt", ".json", ".md")):
+        try:
+            return Path(url).as_uri()
+        except Exception:
+            pass
+
     # No dot at all → assume .com  (e.g. "instagram" → "instagram.com")
     if "." not in url:
         url = url + ".com"
@@ -626,9 +636,19 @@ class _BrowserSession:
 
     async def _get_page(self) -> Page:
         await self._launch()
-        # If somehow page got closed, open a fresh one
+        # If context is closed or disconnected, reset context and re-launch
+        if self._context is not None and hasattr(self._context, "is_connected") and not self._context.is_connected():
+            print("[Browser] Context disconnected — re-launching browser...")
+            self._context = self._page = None
+            await self._launch()
+
         if self._page is None or self._page.is_closed():
-            self._page = await self._context.new_page()
+            try:
+                self._page = await self._context.new_page()
+            except Exception:
+                self._context = self._page = None
+                await self._launch()
+                self._page = await self._context.new_page()
             await asyncio.sleep(0.2)
         return self._page
 
@@ -835,6 +855,22 @@ class _BrowserSession:
         except Exception as e:
             return f"Reload error: {e}"
 
+    async def inject_style(self, css: str) -> str:
+        page = await self._get_page()
+        try:
+            await page.add_style_tag(content=css)
+            return "Reality Hacker: CSS successfully injected into live webpage."
+        except Exception as e:
+            return f"CSS injection error: {e}"
+
+    async def inject_script(self, js: str) -> str:
+        page = await self._get_page()
+        try:
+            res = await page.evaluate(js)
+            return f"Reality Hacker: Script executed. Result: {res}"
+        except Exception as e:
+            return f"Script injection error: {e}"
+
     async def close_browser(self) -> str:
         await self._async_close()
         return f"{self.browser_name} closed."
@@ -1039,6 +1075,12 @@ def browser_control(
             result = sess.run(sess.back())
         elif action == "forward":
             result = sess.run(sess.forward())
+        elif action in ("inject_style", "reality_hacker", "mutate_page"):
+            css = params.get("css") or params.get("style") or params.get("code") or "body { background: #050505 !important; color: #00ff88 !important; filter: invert(0.9) hue-rotate(180deg) !important; }"
+            result = sess.run(sess.inject_style(css))
+        elif action in ("inject_script", "run_js"):
+            js = params.get("js") or params.get("script") or params.get("code") or "alert('ANSH Reality Hacker Active')"
+            result = sess.run(sess.inject_script(js))
         elif action == "reload":
             result = sess.run(sess.reload())
         else:
