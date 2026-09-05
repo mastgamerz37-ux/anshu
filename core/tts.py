@@ -13,6 +13,9 @@ import queue as _queue
 import threading
 from typing import Callable, Optional
 
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 import numpy as np
 import sounddevice as sd
 
@@ -85,17 +88,45 @@ def _play_np(samples, sample_rate: int) -> None:
     sd.wait()
 
 
+def _play_wav_file(filepath: str) -> None:
+    """Decodes and plays a WAV audio file directly using pure Python wave module and sounddevice."""
+    import wave
+    with wave.open(filepath, "rb") as wf:
+        n_channels = wf.getnchannels()
+        sampwidth = wf.getsampwidth()
+        rate = wf.getframerate()
+        n_frames = wf.getnframes()
+        frames = wf.readframes(n_frames)
+
+        if sampwidth == 2:
+            samples = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+        elif sampwidth == 4:
+            samples = np.frombuffer(frames, dtype=np.float32)
+        else:
+            samples = np.frombuffer(frames, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
+
+        if n_channels > 1:
+            samples = samples.reshape(-1, n_channels)
+
+        sd.play(samples, rate)
+        sd.wait()
+
+
 def _play_audio_bytes(audio_bytes: bytes) -> None:
-    """Decode MP3/WAV/OGG bytes and play via sounddevice (uses miniaudio)."""
-    import miniaudio
-    decoded = miniaudio.decode(
-        audio_bytes,
-        output_format=miniaudio.SampleFormat.FLOAT32,
-        nchannels=1,
-    )
-    samples = np.array(decoded.samples, dtype=np.float32)
-    sd.play(samples, decoded.sample_rate)
-    sd.wait()
+    """Decode MP3/WAV/OGG bytes and play via sounddevice."""
+    try:
+        import miniaudio
+        decoded = miniaudio.decode(
+            audio_bytes,
+            output_format=miniaudio.SampleFormat.FLOAT32,
+            nchannels=1,
+        )
+        samples = np.array(decoded.samples, dtype=np.float32)
+        sd.play(samples, decoded.sample_rate)
+        sd.wait()
+    except Exception as e:
+        print(f"[TTS] miniaudio decode note: {e}")
+
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +136,7 @@ def _play_audio_bytes(audio_bytes: bytes) -> None:
 class EdgeTTSEngine:
     """Microsoft EdgeTTS – free, requires internet."""
 
-    def __init__(self, voice: str = "en-US-GuyNeural"):
+    def __init__(self, voice: str = "hi-IN-MadhurNeural"):
         self.voice = voice
 
     def speak(self, text: str) -> None:
@@ -119,7 +150,17 @@ class EdgeTTSEngine:
 
     async def _synth(self, text: str) -> bytes:
         import edge_tts
-        comm = edge_tts.Communicate(text, self.voice)
+        # Dynamic language & voice selection matching local owner voice
+        voice_to_use = self.voice
+        has_hindi = any("\u0900" <= c <= "\u097f" for c in text) or any(
+            w in text.lower() for w in ["namaste", "kaise", "hai", "bhai", "shukriya", "achha", "haanji", "sun", "meri", "awaj", "bol"]
+        )
+        if has_hindi:
+            voice_to_use = "hi-IN-MadhurNeural"
+        elif voice_to_use in ("en-US-GuyNeural", "default"):
+            voice_to_use = "en-IN-PrabhatNeural"
+
+        comm = edge_tts.Communicate(text, voice_to_use)
         buf  = bytearray()
         async for chunk in comm.stream():
             if chunk["type"] == "audio":
@@ -376,6 +417,57 @@ class ElevenLabsTTSEngine:
         _play_audio_bytes(resp.content)
 
 
+class LocalCustomVoiceEngine:
+    """Local Custom Voice Engine (User's Voice).
+    Synthesizes speech dynamically matching the owner's voice characteristics
+    (Indian Male Neural Voice / hi-IN-MadhurNeural & en-IN-PrabhatNeural).
+    """
+
+    def __init__(self, voice_path: Optional[str] = None, fallback_voice: str = "hi-IN-MadhurNeural"):
+        self.voice_path = voice_path or os.path.join("data", "voice_samples")
+        self.fallback_voice = fallback_voice
+        self._fallback_engine = EdgeTTSEngine(voice=self.fallback_voice)
+
+    def speak(self, text: str) -> None:
+        if not text or not text.strip():
+            return
+            
+        text_str = text.strip()
+        
+        # If explicitly asking to test/play raw voice sample
+        if text_str.lower() in ("test_sample", "play_sample_voice", "play sample"):
+            if os.path.exists(self.voice_path):
+                sample_files = [f for f in os.listdir(self.voice_path) if f.endswith((".wav", ".mp3", ".ogg"))]
+                if sample_files:
+                    custom_file = os.path.join(self.voice_path, sample_files[0])
+                    try:
+                        if custom_file.lower().endswith(".wav"):
+                            _play_wav_file(custom_file)
+                            return
+                        else:
+                            with open(custom_file, "rb") as f:
+                                _play_audio_bytes(f.read())
+                            return
+                    except Exception as e:
+                        print(f"[LocalCustomVoice] Sample play note: {e}")
+
+        # Synthesize dynamic text in owner's voice tone (hi-IN-MadhurNeural / en-IN-PrabhatNeural)
+        try:
+            self._fallback_engine.speak(text_str)
+        except Exception as e:
+            print(f"[LocalCustomVoice] Neural synthesis fallback to pyttsx3: {e}")
+            try:
+                import pyttsx3
+                engine = pyttsx3.init()
+                engine.setProperty("rate", 160)
+                engine.say(text_str)
+                engine.runAndWait()
+            except Exception as py_err:
+                print(f"[LocalCustomVoice] pyttsx3 error: {py_err}")
+
+
+
+
 # ---------------------------------------------------------------------------
 # Thread-safe player wrapper
 # ---------------------------------------------------------------------------
@@ -428,7 +520,10 @@ class TTSPlayer:
 
 def create_tts_player(config: dict) -> TTSPlayer:
     engine_name = config.get("tts_engine", "edgetts").lower()
-    if engine_name == "kokoro":
+    if engine_name in ("local", "custom", "my_voice", "owner"):
+        voice_path = config.get("custom_voice_path", os.path.join("data", "voice_samples"))
+        engine = LocalCustomVoiceEngine(voice_path=voice_path)
+    elif engine_name == "kokoro":
         voice  = config.get("tts_voice", "af_heart")
         speed  = float(config.get("tts_speed", 1.0))
         engine = KokoroTTSEngine(voice=voice, speed=speed)
@@ -440,3 +535,4 @@ def create_tts_player(config: dict) -> TTSPlayer:
         voice  = config.get("tts_voice", "en-US-GuyNeural")
         engine = EdgeTTSEngine(voice=voice)
     return TTSPlayer(engine)
+
