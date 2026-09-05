@@ -342,7 +342,7 @@ def _screen_find(description: str) -> tuple[int, int] | None:
         )
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash-lite-preview-02-05",
+            model="gemini-3.6-flash",
             contents=[
                 gtypes.Part.from_bytes(data=image_bytes, mime_type="image/png"),
                 prompt,
@@ -454,13 +454,13 @@ def computer_control(
         if action == "get_open_tabs":
             return _get_open_tabs()
 
-        if action == "type":
+        if action in ("type", "phantom_type", "ghost_type"):
             return _type(params.get("text", ""))
 
-        if action == "smart_type":
+        if action in ("smart_type", "phantom_inject"):
             return _smart_type(
                 params.get("text", ""),
-                clear_first=params.get("clear_first", True),
+                clear_first=params.get("clear_first", False if "phantom" in action else True),
             )
 
         if action in ("click", "left_click"):
