@@ -34,11 +34,12 @@ def build():
         f'--add-data "core{separator}core"',
         f'--add-data "memory{separator}memory"',
         f'--add-data "config{separator}config"',
+        f'--add-data "keys{separator}keys"',
         f'--add-data "face.png{separator}."'
     ]
     
     # Ensure empty folders exist so Pyinstaller doesn't fail
-    for d in ["actions", "core", "memory", "config"]:
+    for d in ["actions", "core", "memory", "config", "keys"]:
         Path(d).mkdir(exist_ok=True)
     if not Path("face.png").exists():
         # Create dummy file if face.png is missing just to avoid build crash
